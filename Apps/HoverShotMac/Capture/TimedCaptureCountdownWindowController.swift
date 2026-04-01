@@ -42,6 +42,12 @@ final class TimedCaptureCountdownWindowController: NSWindowController {
     }
 
     func closeOverlay() {
+        guard let window else {
+            return
+        }
+
+        window.orderOut(nil)
+        NSApp.updateWindows()
         close()
     }
 

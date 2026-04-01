@@ -88,20 +88,48 @@ public final class CaptureService {
             return
         }
 
-        guard activeSelectionSession == nil else {
-            completion(.failure(CaptureError.selectionAlreadyInProgress))
+        guard canStartCaptureFlow(completion: completion) else {
             return
         }
 
-        guard activeTimedCaptureTask == nil else {
-            completion(.failure(CaptureError.timedCaptureAlreadyInProgress))
-            return
+        beginTimedInteractiveCapture(
+            delayInSeconds: delayInSeconds,
+            completion: completion
+        )
+    }
+
+    private func beginTimedInteractiveCapture(
+        delayInSeconds: Int,
+        completion: @escaping (Result<Shot, Error>) -> Void
+    ) {
+        let session = AreaSelectionSession { [weak self] result in
+            guard let self else {
+                return
+            }
+
+            self.activeSelectionSession = nil
+
+            switch result {
+            case let .success(area):
+                self.startTimedCaptureCountdown(
+                    delayInSeconds: delayInSeconds,
+                    area: area,
+                    completion: completion
+                )
+            case let .failure(error):
+                completion(.failure(error))
+            }
         }
 
-        guard ensureScreenCapturePermission(completion: completion) else {
-            return
-        }
+        activeSelectionSession = session
+        session.start()
+    }
 
+    private func startTimedCaptureCountdown(
+        delayInSeconds: Int,
+        area: CaptureArea,
+        completion: @escaping (Result<Shot, Error>) -> Void
+    ) {
         let countdownWindowController = TimedCaptureCountdownWindowController()
         timedCaptureCountdownWindowController = countdownWindowController
 
@@ -132,9 +160,15 @@ public final class CaptureService {
             }
 
             countdownWindowController.closeOverlay()
+
+            // Give AppKit one brief beat to remove the countdown overlay from
+            // the composited desktop before ScreenCaptureKit takes the shot.
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 150_000_000)
+
             timedCaptureCountdownWindowController = nil
             activeTimedCaptureTask = nil
-            beginInteractiveCapture(completion: completion)
+            completion(await capture(area: area))
         }
 
         activeTimedCaptureTask = task

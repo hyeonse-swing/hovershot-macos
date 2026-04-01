@@ -83,12 +83,18 @@ This repeats the last successful area capture rectangle without drawing it again
 
 ### Timed Capture
 
-Use `Timed Capture` if you need a short delay before selecting the target area.
+Use `Timed Capture` if you need a short delay before the selected area is captured.
 
 Typical use cases:
 - opening a menu before capture
 - preparing a hover state
 - capturing a transient popover
+
+Flow:
+1. choose `Timed Capture`
+2. select the target area first
+3. wait for the countdown
+4. the selected area is captured automatically
 
 ## Floating Shots
 

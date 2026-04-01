@@ -465,6 +465,7 @@ final class AppCoordinator: NSObject {
             do {
                 try floatingWindowCoordinator.present(shot)
                 shotsBrowserWindowController.reloadShots()
+                copyShot(withID: shot.id)
             } catch {
                 presentErrorAlert(message: "Failed to show captured shot.", detail: error.localizedDescription)
             }

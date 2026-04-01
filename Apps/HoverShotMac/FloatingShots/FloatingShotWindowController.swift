@@ -70,6 +70,14 @@ final class FloatingShotWindowController: NSWindowController {
 
         super.init(window: panel)
 
+        panel.onCopyRequested = { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.onCopyImageRequested?(self.shotID)
+        }
+
         contentView.titleField.stringValue = shot.title
         contentView.imageView.image = image
         contentView.imageView.draggingPasteboardWriterProvider = { [weak self] in

@@ -2,7 +2,7 @@ import AppKit
 
 final class FloatingShotContentView: NSView {
     let titleField = NSTextField(labelWithString: "")
-    let subtitleField = NSTextField(labelWithString: "Scroll for opacity · Drag edges to resize · Right-click for tools")
+    let subtitleField = NSTextField(labelWithString: "Scroll for opacity · Drag edges to resize · Cmd-C to copy · Right-click for tools")
     let imageView = DraggableImageView()
 
     override init(frame frameRect: NSRect) {

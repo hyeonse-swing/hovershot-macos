@@ -111,7 +111,8 @@ public final class ShotsBrowserWindowController: NSWindowController {
     private let notesTextView = NSTextView()
     private let notesScrollView = NSScrollView()
     private let saveMetadataButton = NSButton(title: "Save Details", target: nil, action: nil)
-    private let ocrField = NSTextField(labelWithString: "")
+    private let ocrTextView = NSTextView()
+    private let ocrScrollView = NSScrollView()
     private let ocrActionsLabel = NSTextField(labelWithString: "Smart Actions")
     private let ocrActionsStack = NSStackView()
     private let openButton = NSButton(title: "Open", target: nil, action: nil)
@@ -347,30 +348,53 @@ public final class ShotsBrowserWindowController: NSWindowController {
         saveMetadataButton.target = self
         saveMetadataButton.action = #selector(handleSaveMetadata)
         saveMetadataButton.translatesAutoresizingMaskIntoConstraints = false
-        ocrField.textColor = .secondaryLabelColor
-        ocrField.lineBreakMode = .byWordWrapping
+        ocrTextView.isEditable = false
+        ocrTextView.isSelectable = true
+        ocrTextView.isRichText = false
+        ocrTextView.drawsBackground = false
+        ocrTextView.textColor = .secondaryLabelColor
+        ocrTextView.font = .systemFont(ofSize: 12, weight: .regular)
+        ocrTextView.textContainerInset = NSSize(width: 0, height: 0)
+        ocrTextView.translatesAutoresizingMaskIntoConstraints = false
+        ocrTextView.textContainer?.widthTracksTextView = true
+        ocrTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        ocrTextView.textContainer?.lineFragmentPadding = 0
+        ocrTextView.textContainer?.lineBreakMode = .byCharWrapping
+        ocrTextView.isHorizontallyResizable = false
+        ocrTextView.isVerticallyResizable = true
+        ocrTextView.maxSize = NSSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+
+        ocrScrollView.drawsBackground = false
+        ocrScrollView.borderType = .noBorder
+        ocrScrollView.hasVerticalScroller = true
+        ocrScrollView.hasHorizontalScroller = false
+        ocrScrollView.autohidesScrollers = true
+        ocrScrollView.translatesAutoresizingMaskIntoConstraints = false
+        ocrScrollView.documentView = ocrTextView
         ocrActionsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         ocrActionsLabel.textColor = .secondaryLabelColor
         ocrActionsLabel.isHidden = true
-        ocrActionsStack.orientation = .horizontal
+        ocrActionsStack.orientation = .vertical
         ocrActionsStack.alignment = .leading
-        ocrActionsStack.spacing = 8
+        ocrActionsStack.spacing = 6
         ocrActionsStack.translatesAutoresizingMaskIntoConstraints = false
         ocrActionsStack.isHidden = true
 
-        [titleField, metadataField, stateField, ocrField, ocrActionsLabel].forEach {
+        [titleField, metadataField, stateField, ocrActionsLabel].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
             $0.lineBreakMode = .byWordWrapping
         }
         metadataField.maximumNumberOfLines = 2
         stateField.maximumNumberOfLines = 2
-        ocrField.maximumNumberOfLines = 3
         metadataField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stateField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        ocrField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metadataField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         stateField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        ocrField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        ocrScrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        ocrScrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         [openButton, annotateButton, copyButton, exportButton, revealButton, deleteButton, refreshButton].forEach {
             $0.bezelStyle = .rounded
@@ -413,13 +437,16 @@ public final class ShotsBrowserWindowController: NSWindowController {
         metadataActionRow.alignment = .leading
         metadataActionRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let infoStack = NSStackView(views: [titleField, metadataField, stateField, ocrField, ocrActionsLabel, ocrActionsStack])
+        let infoStack = NSStackView(views: [titleField, metadataField, stateField])
         infoStack.orientation = .vertical
         infoStack.spacing = 8
         infoStack.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(previewImageView)
         container.addSubview(infoStack)
+        container.addSubview(ocrScrollView)
+        container.addSubview(ocrActionsLabel)
+        container.addSubview(ocrActionsStack)
         container.addSubview(favoriteRow)
         container.addSubview(tagsRow)
         container.addSubview(notesStack)
@@ -436,7 +463,20 @@ public final class ShotsBrowserWindowController: NSWindowController {
             infoStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             infoStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
 
-            favoriteRow.topAnchor.constraint(equalTo: infoStack.bottomAnchor, constant: 18),
+            ocrScrollView.topAnchor.constraint(equalTo: infoStack.bottomAnchor, constant: 12),
+            ocrScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+            ocrScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -40),
+            ocrScrollView.heightAnchor.constraint(equalToConstant: 68),
+
+            ocrActionsLabel.topAnchor.constraint(equalTo: ocrScrollView.bottomAnchor, constant: 10),
+            ocrActionsLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+            ocrActionsLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
+
+            ocrActionsStack.topAnchor.constraint(equalTo: ocrActionsLabel.bottomAnchor, constant: 8),
+            ocrActionsStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+            ocrActionsStack.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
+
+            favoriteRow.topAnchor.constraint(equalTo: ocrActionsStack.bottomAnchor, constant: 18),
             favoriteRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             favoriteRow.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
 
@@ -511,7 +551,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             favoriteButton.state = .off
             tagsField.stringValue = ""
             notesTextView.string = ""
-            ocrField.stringValue = ""
+            ocrTextView.string = ""
             currentDetectedDataItems = []
             reloadOCRActionButtons()
             isUpdatingMetadataForm = false
@@ -527,7 +567,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         favoriteButton.state = shot.isFavorite ? .on : .off
         tagsField.stringValue = shot.tags.joined(separator: ", ")
         notesTextView.string = shot.notes ?? ""
-        ocrField.stringValue = ocrString(for: shot)
+        ocrTextView.string = ocrString(for: shot)
         currentDetectedDataItems = detectedDataItems(for: shot)
         reloadOCRActionButtons()
         isUpdatingMetadataForm = false
@@ -543,7 +583,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         favoriteButton.state = .off
         tagsField.stringValue = ""
         notesTextView.string = ""
-        ocrField.stringValue = ""
+        ocrTextView.string = ""
         currentDetectedDataItems = []
         reloadOCRActionButtons()
         isUpdatingMetadataForm = false
@@ -681,9 +721,21 @@ public final class ShotsBrowserWindowController: NSWindowController {
             buttons.append(button)
         }
 
-        buttons.forEach { ocrActionsStack.addArrangedSubview($0) }
+        makeButtonRows(buttons, maxPerRow: 2).forEach { ocrActionsStack.addArrangedSubview($0) }
         ocrActionsLabel.isHidden = false
         ocrActionsStack.isHidden = buttons.isEmpty
+    }
+
+    private func makeButtonRows(_ buttons: [NSButton], maxPerRow: Int) -> [NSStackView] {
+        stride(from: 0, to: buttons.count, by: maxPerRow).map { index in
+            let rowButtons = Array(buttons[index..<min(index + maxPerRow, buttons.count)])
+            let row = NSStackView(views: rowButtons)
+            row.orientation = .horizontal
+            row.alignment = .leading
+            row.spacing = 8
+            row.translatesAutoresizingMaskIntoConstraints = false
+            return row
+        }
     }
 
     private func makeOCRActionButton(
