@@ -1,5 +1,7 @@
 # HoverShot User Guide
 
+[한국어 버전](user-guide.ko.md)
+
 ## What It Is
 
 `HoverShot` is a macOS menu bar app.
