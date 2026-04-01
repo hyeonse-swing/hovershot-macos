@@ -65,15 +65,15 @@ open dist/HoverShot.app
 - `dist/HoverShot.app`
 - `dist/HoverShot-macOS.zip`
 - `dist/HoverShot-macOS.sha256`
-- `dist/HoverShot Team Guide.md`
-- `dist/HoverShot Team Guide (KO).md`
+- `dist/HoverShot User Guide.md`
+- `dist/HoverShot User Guide (KO).md`
 
 ## 추천 공유 방식
 
 가장 현실적인 방식은 다음과 같습니다.
 1. 소스 코드는 GitHub에 둡니다.
 2. `./scripts/package-team-build.sh`로 검증된 앱 패키지를 만듭니다.
-3. `dist/HoverShot-macOS.zip`을 GitHub Release나 Slack, Drive 등에 올립니다.
+3. `dist/HoverShot-macOS.zip`을 GitHub Release에 올립니다.
 4. 비개발 팀원은 소스 대신 패키지된 앱을 사용하게 합니다.
 
 이 방식이면:

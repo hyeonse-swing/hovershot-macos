@@ -25,7 +25,7 @@ It lets you:
 
 ### If macOS Blocks The App
 
-Because the current internal build is locally signed and not notarized:
+Because the current build is locally signed and not notarized:
 1. right-click `HoverShot.app`
 2. choose `Open`
 3. confirm that you want to open it

@@ -4,7 +4,7 @@
 
 [한국어 문서](README.ko.md)
 
-It is being built as an internal alternative to ScreenFloat-style workflows:
+It is a ScreenFloat-style workflow tool for:
 - capture an area or a window
 - keep shots floating above other apps
 - annotate, search, copy, export, and organize shots
@@ -13,7 +13,7 @@ It is being built as an internal alternative to ScreenFloat-style workflows:
 
 ## Current State
 
-The project is usable on macOS today and is set up for team sharing.
+The project is usable on macOS today.
 
 Implemented highlights:
 - area capture
@@ -53,7 +53,7 @@ Build a local app bundle:
 open dist/HoverShot.app
 ```
 
-Create a shareable team package:
+Create a distributable app package:
 
 ```bash
 ./scripts/package-team-build.sh
@@ -63,26 +63,25 @@ Outputs:
 - `dist/HoverShot.app`
 - `dist/HoverShot-macOS.zip`
 - `dist/HoverShot-macOS.sha256`
-- `dist/HoverShot Team Guide.md`
+- `dist/HoverShot User Guide.md`
+- `dist/HoverShot User Guide (KO).md`
 
-## Recommended Sharing
+## Distribution
 
 The simplest working setup is:
 1. keep the full source in GitHub
 2. build a tested package with `./scripts/package-team-build.sh`
-3. attach `dist/HoverShot-macOS.zip` to a GitHub Release or share it in Slack/Drive
+3. attach `dist/HoverShot-macOS.zip` to a GitHub Release
 4. ask non-developers to use the packaged app instead of building from source
 
-This keeps one source of truth for code, one tested binary for the team, and one bundled guide for first-run setup.
+This keeps one source of truth for code, one tested binary for users, and bundled setup guides for first-run setup.
 
 ## Docs
 
-- English team sharing and release guidance: [docs/team-distribution.md](docs/team-distribution.md)
-- Korean team sharing and release guidance: [docs/team-distribution.ko.md](docs/team-distribution.ko.md)
 - English end-user usage guide: [docs/user-guide.md](docs/user-guide.md)
 - Korean end-user usage guide: [docs/user-guide.ko.md](docs/user-guide.ko.md)
 
 ## Notes
 
-- This build is locally signed for internal testing.
+- This build is locally signed for testing and development.
 - For broader distribution, the next step is `Developer ID signing + notarization`.
