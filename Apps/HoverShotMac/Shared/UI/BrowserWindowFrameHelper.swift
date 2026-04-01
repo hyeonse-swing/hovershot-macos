@@ -22,8 +22,8 @@ public enum BrowserWindowFrameHelper {
             return
         }
 
-        let minimumWidth = max(window.minSize.width, 640)
-        let minimumHeight = max(window.minSize.height, 420)
+        let minimumWidth = max(window.minSize.width, 0)
+        let minimumHeight = max(window.minSize.height, 0)
         let targetWidth = min(max(preferredSize.width, minimumWidth), visibleFrame.width)
         let targetHeight = min(max(preferredSize.height, minimumHeight), visibleFrame.height)
 

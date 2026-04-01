@@ -51,7 +51,7 @@ public protocol ShotsBrowserWindowControllerDelegate: AnyObject {
 
 @MainActor
 public final class ShotsBrowserWindowController: NSWindowController {
-    private static let preferredWindowSize = NSSize(width: 1040, height: 680)
+    private static let preferredWindowSize = NSSize(width: 920, height: 620)
 
     private enum FilterScope: Int, CaseIterable {
         case all
@@ -101,6 +101,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
     private let searchField = NSSearchField()
     private let scopePopUpButton = NSPopUpButton()
     private let tableView = NSTableView()
+    private let detailScrollView = NSScrollView()
     private let previewImageView = NSImageView()
     private var previewHeightConstraint: NSLayoutConstraint?
     private let titleField = NSTextField()
@@ -111,10 +112,10 @@ public final class ShotsBrowserWindowController: NSWindowController {
     private let notesTextView = NSTextView()
     private let notesScrollView = NSScrollView()
     private let saveMetadataButton = NSButton(title: "Save Details", target: nil, action: nil)
-    private let ocrTextView = NSTextView()
-    private let ocrScrollView = NSScrollView()
+    private let ocrField = NSTextField(labelWithString: "")
     private let ocrActionsLabel = NSTextField(labelWithString: "Smart Actions")
     private let ocrActionsStack = NSStackView()
+    private let primaryActionsContainer = NSView()
     private let openButton = NSButton(title: "Open", target: nil, action: nil)
     private let annotateButton = NSButton(title: "Annotate", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
@@ -133,6 +134,12 @@ public final class ShotsBrowserWindowController: NSWindowController {
     private var isUpdatingMetadataForm = false
     private let relativeDateFormatter = RelativeDateTimeFormatter()
     private let absoluteDateFormatter = DateFormatter()
+    private weak var detailContainerView: NSView?
+    private weak var browserSplitView: NSSplitView?
+
+    private final class FlippedContentView: NSView {
+        override var isFlipped: Bool { true }
+    }
 
     public init(shotStore: ShotStore) {
         self.shotStore = shotStore
@@ -146,7 +153,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         window.title = "Shots Browser"
         window.identifier = NSUserInterfaceItemIdentifier("shots-browser")
         window.setFrameAutosaveName("ShotsBrowser")
-        window.minSize = NSSize(width: 900, height: 580)
+        window.minSize = NSSize(width: 600, height: 520)
         BrowserWindowFrameHelper.prepareForStandardBrowserBehavior(window)
 
         super.init(window: window)
@@ -155,6 +162,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         absoluteDateFormatter.timeStyle = .short
 
         configureWindow()
+        observeWindowChanges()
         observeStoreChanges()
         DispatchQueue.main.async { [weak self] in
             self?.reloadShots(preservingSelection: false)
@@ -176,6 +184,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             BrowserWindowFrameHelper.normalizeFrame(of: window, preferredSize: Self.preferredWindowSize)
             BrowserWindowFrameHelper.bringAppAndWindowToFront(window)
         }
+        refreshDetailLayoutAfterPresentation()
     }
 
     public func reloadShots(preservingSelection: Bool = true) {
@@ -219,6 +228,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.translatesAutoresizingMaskIntoConstraints = false
+        browserSplitView = splitView
 
         contentView.addSubview(splitView)
 
@@ -233,13 +243,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
         let detail = makeDetailView()
         splitView.addArrangedSubview(sidebar)
         splitView.addArrangedSubview(detail)
-        splitView.setPosition(320, ofDividerAt: 0)
+        splitView.setPosition(240, ofDividerAt: 0)
     }
 
     private func makeSidebarView() -> NSView {
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
-        container.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        container.widthAnchor.constraint(greaterThanOrEqualToConstant: 200).isActive = true
 
         searchField.placeholderString = "Search titles, OCR, tags, notes"
         searchField.delegate = self
@@ -306,13 +316,30 @@ public final class ShotsBrowserWindowController: NSWindowController {
     }
 
     private func makeDetailView() -> NSView {
-        let container = NSView()
+        detailScrollView.translatesAutoresizingMaskIntoConstraints = false
+        detailScrollView.drawsBackground = false
+        detailScrollView.borderType = .noBorder
+        detailScrollView.hasVerticalScroller = true
+        detailScrollView.hasHorizontalScroller = false
+        detailScrollView.autohidesScrollers = true
+
+        let container = FlippedContentView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        detailContainerView = container
+        detailScrollView.documentView = container
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: detailScrollView.contentView.leadingAnchor),
+            container.trailingAnchor.constraint(equalTo: detailScrollView.contentView.trailingAnchor),
+            container.topAnchor.constraint(equalTo: detailScrollView.contentView.topAnchor),
+            container.widthAnchor.constraint(equalTo: detailScrollView.contentView.widthAnchor),
+            container.heightAnchor.constraint(greaterThanOrEqualTo: detailScrollView.contentView.heightAnchor)
+        ])
 
         previewImageView.imageScaling = .scaleProportionallyUpOrDown
         previewImageView.imageAlignment = .alignCenter
         previewImageView.translatesAutoresizingMaskIntoConstraints = false
-        let previewHeightConstraint = previewImageView.heightAnchor.constraint(equalToConstant: 240)
+        let previewHeightConstraint = previewImageView.heightAnchor.constraint(equalToConstant: 188)
         previewHeightConstraint.isActive = true
         self.previewHeightConstraint = previewHeightConstraint
 
@@ -340,7 +367,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         notesScrollView.hasVerticalScroller = true
         notesScrollView.documentView = notesTextView
         notesScrollView.translatesAutoresizingMaskIntoConstraints = false
-        notesScrollView.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        notesScrollView.heightAnchor.constraint(equalToConstant: 84).isActive = true
         favoriteButton.target = self
         favoriteButton.action = #selector(handleToggleFavorite)
         favoriteButton.translatesAutoresizingMaskIntoConstraints = false
@@ -348,32 +375,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
         saveMetadataButton.target = self
         saveMetadataButton.action = #selector(handleSaveMetadata)
         saveMetadataButton.translatesAutoresizingMaskIntoConstraints = false
-        ocrTextView.isEditable = false
-        ocrTextView.isSelectable = true
-        ocrTextView.isRichText = false
-        ocrTextView.drawsBackground = false
-        ocrTextView.textColor = .secondaryLabelColor
-        ocrTextView.font = .systemFont(ofSize: 12, weight: .regular)
-        ocrTextView.textContainerInset = NSSize(width: 0, height: 0)
-        ocrTextView.translatesAutoresizingMaskIntoConstraints = false
-        ocrTextView.textContainer?.widthTracksTextView = true
-        ocrTextView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
-        ocrTextView.textContainer?.lineFragmentPadding = 0
-        ocrTextView.textContainer?.lineBreakMode = .byCharWrapping
-        ocrTextView.isHorizontallyResizable = false
-        ocrTextView.isVerticallyResizable = true
-        ocrTextView.maxSize = NSSize(
-            width: CGFloat.greatestFiniteMagnitude,
-            height: CGFloat.greatestFiniteMagnitude
-        )
-
-        ocrScrollView.drawsBackground = false
-        ocrScrollView.borderType = .noBorder
-        ocrScrollView.hasVerticalScroller = true
-        ocrScrollView.hasHorizontalScroller = false
-        ocrScrollView.autohidesScrollers = true
-        ocrScrollView.translatesAutoresizingMaskIntoConstraints = false
-        ocrScrollView.documentView = ocrTextView
+        ocrField.textColor = .secondaryLabelColor
+        ocrField.font = .systemFont(ofSize: 12, weight: .regular)
+        ocrField.lineBreakMode = .byCharWrapping
+        ocrField.cell?.wraps = true
+        ocrField.cell?.usesSingleLineMode = false
+        ocrField.cell?.isScrollable = false
+        ocrField.translatesAutoresizingMaskIntoConstraints = false
         ocrActionsLabel.font = .systemFont(ofSize: 12, weight: .semibold)
         ocrActionsLabel.textColor = .secondaryLabelColor
         ocrActionsLabel.isHidden = true
@@ -389,12 +397,18 @@ public final class ShotsBrowserWindowController: NSWindowController {
         }
         metadataField.maximumNumberOfLines = 2
         stateField.maximumNumberOfLines = 2
+        ocrField.maximumNumberOfLines = 5
+        titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        titleField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         metadataField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stateField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        ocrField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        ocrField.setContentCompressionResistancePriority(.required, for: .vertical)
         metadataField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         stateField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        ocrScrollView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        ocrScrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        ocrField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        tagsField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        tagsField.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         [openButton, annotateButton, copyButton, exportButton, revealButton, deleteButton, refreshButton].forEach {
             $0.bezelStyle = .rounded
@@ -407,11 +421,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         revealButton.action = #selector(handleRevealSelectedShot)
         deleteButton.action = #selector(handleDeleteSelectedShot)
         refreshButton.action = #selector(handleRefresh)
-
-        let buttonRow = NSStackView(views: [openButton, annotateButton, copyButton, exportButton, revealButton, deleteButton, refreshButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 10
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        primaryActionsContainer.translatesAutoresizingMaskIntoConstraints = false
 
         let favoriteRow = NSStackView(views: [makeEditorLabel("Favorite"), favoriteButton])
         favoriteRow.orientation = .horizontal
@@ -444,31 +454,30 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
         container.addSubview(previewImageView)
         container.addSubview(infoStack)
-        container.addSubview(ocrScrollView)
+        container.addSubview(ocrField)
         container.addSubview(ocrActionsLabel)
         container.addSubview(ocrActionsStack)
         container.addSubview(favoriteRow)
         container.addSubview(tagsRow)
         container.addSubview(notesStack)
         container.addSubview(metadataActionRow)
-        container.addSubview(buttonRow)
+        container.addSubview(primaryActionsContainer)
 
         NSLayoutConstraint.activate([
             previewImageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             previewImageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             previewImageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-            previewImageView.heightAnchor.constraint(equalToConstant: 320),
+            previewImageView.heightAnchor.constraint(equalToConstant: 220),
 
             infoStack.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 20),
             infoStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             infoStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
 
-            ocrScrollView.topAnchor.constraint(equalTo: infoStack.bottomAnchor, constant: 12),
-            ocrScrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
-            ocrScrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -40),
-            ocrScrollView.heightAnchor.constraint(equalToConstant: 68),
+            ocrField.topAnchor.constraint(equalTo: infoStack.bottomAnchor, constant: 12),
+            ocrField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
+            ocrField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -40),
 
-            ocrActionsLabel.topAnchor.constraint(equalTo: ocrScrollView.bottomAnchor, constant: 10),
+            ocrActionsLabel.topAnchor.constraint(equalTo: ocrField.bottomAnchor, constant: 10),
             ocrActionsLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 40),
             ocrActionsLabel.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -40),
 
@@ -491,13 +500,15 @@ public final class ShotsBrowserWindowController: NSWindowController {
             metadataActionRow.topAnchor.constraint(equalTo: notesStack.bottomAnchor, constant: 12),
             metadataActionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
 
-            buttonRow.topAnchor.constraint(equalTo: metadataActionRow.bottomAnchor, constant: 18),
-            buttonRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            buttonRow.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24)
+            primaryActionsContainer.topAnchor.constraint(equalTo: metadataActionRow.bottomAnchor, constant: 18),
+            primaryActionsContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            primaryActionsContainer.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
+            primaryActionsContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24)
         ])
 
+        configurePrimaryActionRows()
         updateButtons(enabled: false)
-        return container
+        return detailScrollView
     }
 
     private func applyFilter() {
@@ -551,7 +562,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             favoriteButton.state = .off
             tagsField.stringValue = ""
             notesTextView.string = ""
-            ocrTextView.string = ""
+            ocrField.stringValue = ""
             currentDetectedDataItems = []
             reloadOCRActionButtons()
             isUpdatingMetadataForm = false
@@ -567,7 +578,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         favoriteButton.state = shot.isFavorite ? .on : .off
         tagsField.stringValue = shot.tags.joined(separator: ", ")
         notesTextView.string = shot.notes ?? ""
-        ocrTextView.string = ocrString(for: shot)
+        ocrField.stringValue = ocrString(for: shot)
         currentDetectedDataItems = detectedDataItems(for: shot)
         reloadOCRActionButtons()
         isUpdatingMetadataForm = false
@@ -583,7 +594,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         favoriteButton.state = .off
         tagsField.stringValue = ""
         notesTextView.string = ""
-        ocrTextView.string = ""
+        ocrField.stringValue = ""
         currentDetectedDataItems = []
         reloadOCRActionButtons()
         isUpdatingMetadataForm = false
@@ -670,8 +681,8 @@ public final class ShotsBrowserWindowController: NSWindowController {
             .replacingOccurrences(of: "\n", with: " · ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let clampedPreview: String
-        if preview.count > 220 {
-            clampedPreview = String(preview.prefix(220)) + "…"
+        if preview.count > 420 {
+            clampedPreview = String(preview.prefix(420)) + "…"
         } else {
             clampedPreview = preview
         }
@@ -721,21 +732,149 @@ public final class ShotsBrowserWindowController: NSWindowController {
             buttons.append(button)
         }
 
-        makeButtonRows(buttons, maxPerRow: 2).forEach { ocrActionsStack.addArrangedSubview($0) }
+        rebuildWrappedButtonRows(
+            buttons: buttons,
+            in: ocrActionsStack,
+            availableWidth: availableOCRActionsWidth(),
+            maxColumns: 3
+        )
         ocrActionsLabel.isHidden = false
         ocrActionsStack.isHidden = buttons.isEmpty
     }
 
-    private func makeButtonRows(_ buttons: [NSButton], maxPerRow: Int) -> [NSStackView] {
-        stride(from: 0, to: buttons.count, by: maxPerRow).map { index in
-            let rowButtons = Array(buttons[index..<min(index + maxPerRow, buttons.count)])
-            let row = NSStackView(views: rowButtons)
+    private func configurePrimaryActionRows() {
+        primaryActionsContainer.subviews.forEach { $0.removeFromSuperview() }
+
+        let horizontalSpacing: CGFloat = 8
+        let verticalSpacing: CGFloat = 8
+
+        let topButtons = [openButton, annotateButton, copyButton, exportButton]
+        let bottomButtons = [revealButton, deleteButton, refreshButton]
+
+        topButtons.forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            primaryActionsContainer.addSubview($0)
+        }
+        bottomButtons.forEach {
+            $0.translatesAutoresizingMaskIntoConstraints = false
+            primaryActionsContainer.addSubview($0)
+        }
+
+        var constraints: [NSLayoutConstraint] = []
+
+        constraints.append(openButton.topAnchor.constraint(equalTo: primaryActionsContainer.topAnchor))
+        constraints.append(openButton.leadingAnchor.constraint(equalTo: primaryActionsContainer.leadingAnchor))
+
+        constraints.append(annotateButton.topAnchor.constraint(equalTo: openButton.topAnchor))
+        constraints.append(annotateButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: horizontalSpacing))
+
+        constraints.append(copyButton.topAnchor.constraint(equalTo: openButton.topAnchor))
+        constraints.append(copyButton.leadingAnchor.constraint(equalTo: annotateButton.trailingAnchor, constant: horizontalSpacing))
+
+        constraints.append(exportButton.topAnchor.constraint(equalTo: openButton.topAnchor))
+        constraints.append(exportButton.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: horizontalSpacing))
+        constraints.append(exportButton.trailingAnchor.constraint(lessThanOrEqualTo: primaryActionsContainer.trailingAnchor))
+
+        constraints.append(revealButton.topAnchor.constraint(equalTo: openButton.bottomAnchor, constant: verticalSpacing))
+        constraints.append(revealButton.leadingAnchor.constraint(equalTo: primaryActionsContainer.leadingAnchor))
+
+        constraints.append(deleteButton.topAnchor.constraint(equalTo: revealButton.topAnchor))
+        constraints.append(deleteButton.leadingAnchor.constraint(equalTo: revealButton.trailingAnchor, constant: horizontalSpacing))
+
+        constraints.append(refreshButton.topAnchor.constraint(equalTo: revealButton.topAnchor))
+        constraints.append(refreshButton.leadingAnchor.constraint(equalTo: deleteButton.trailingAnchor, constant: horizontalSpacing))
+        constraints.append(refreshButton.trailingAnchor.constraint(lessThanOrEqualTo: primaryActionsContainer.trailingAnchor))
+        constraints.append(refreshButton.bottomAnchor.constraint(equalTo: primaryActionsContainer.bottomAnchor))
+
+        NSLayoutConstraint.activate(constraints)
+        primaryActionsContainer.isHidden = false
+    }
+
+    private func rebuildWrappedButtonRows(
+        buttons: [NSButton],
+        in stack: NSStackView,
+        availableWidth: CGFloat,
+        maxColumns: Int
+    ) {
+        stack.arrangedSubviews.forEach { view in
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+
+        guard buttons.isEmpty == false else {
+            stack.isHidden = true
+            return
+        }
+
+        let spacing: CGFloat = 8
+        let estimatedButtonWidth: CGFloat = 108
+        let columns = max(
+            1,
+            min(
+                maxColumns,
+                Int((max(availableWidth, estimatedButtonWidth) + spacing) / (estimatedButtonWidth + spacing))
+            )
+        )
+
+        stride(from: 0, to: buttons.count, by: columns).forEach { index in
+            let rowButtons = Array(buttons[index..<min(index + columns, buttons.count)])
+            let row = NSStackView()
             row.orientation = .horizontal
             row.alignment = .leading
-            row.spacing = 8
+            row.spacing = spacing
             row.translatesAutoresizingMaskIntoConstraints = false
-            return row
+            rowButtons.forEach { row.addArrangedSubview($0) }
+            row.spacing = spacing
+            stack.addArrangedSubview(row)
         }
+
+        stack.isHidden = false
+    }
+
+    private func availablePrimaryActionsWidth() -> CGFloat {
+        max(resolvedDetailContentWidth() - 48, 240)
+    }
+
+    private func availableOCRActionsWidth() -> CGFloat {
+        max(resolvedDetailContentWidth() - 80, 140)
+    }
+
+    private func resolvedDetailContentWidth() -> CGFloat {
+        window?.contentView?.layoutSubtreeIfNeeded()
+        browserSplitView?.layoutSubtreeIfNeeded()
+        detailScrollView.layoutSubtreeIfNeeded()
+        detailScrollView.contentView.layoutSubtreeIfNeeded()
+        detailContainerView?.layoutSubtreeIfNeeded()
+
+        let measuredWidths: [CGFloat] = [
+            browserSplitView?.arrangedSubviews.last?.bounds.width ?? 0,
+            browserSplitView?.subviews.last?.bounds.width ?? 0,
+            detailScrollView.bounds.width,
+            detailScrollView.frame.width,
+            detailContainerView?.bounds.width ?? 0,
+            detailScrollView.contentSize.width,
+            detailScrollView.contentView.bounds.width,
+            max((window?.contentView?.bounds.width ?? Self.preferredWindowSize.width) - 260, 0)
+        ]
+
+        return measuredWidths.filter { $0 > 0 }.max() ?? (Self.preferredWindowSize.width - 240)
+    }
+
+    private func refreshDetailLayoutAfterPresentation() {
+        let refresh: @MainActor () -> Void = { [weak self] in
+            guard let self else { return }
+            self.reloadOCRActionButtons()
+            self.scrollDetailToTop()
+        }
+
+        refresh()
+        DispatchQueue.main.async(execute: refresh)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: refresh)
+    }
+
+    private func scrollDetailToTop() {
+        detailScrollView.contentView.scroll(to: NSPoint(x: 0, y: 0))
+        detailScrollView.reflectScrolledClipView(detailScrollView.contentView)
     }
 
     private func makeOCRActionButton(
@@ -777,9 +916,27 @@ public final class ShotsBrowserWindowController: NSWindowController {
         )
     }
 
+    private func observeWindowChanges() {
+        guard let window else {
+            return
+        }
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowDidResize),
+            name: NSWindow.didResizeNotification,
+            object: window
+        )
+    }
+
     @objc
     private func handleShotStoreDidChange() {
         reloadShots()
+    }
+
+    @objc
+    private func handleWindowDidResize() {
+        reloadOCRActionButtons()
     }
 
     private func presentErrorAlert(message: String, detail: String) {
