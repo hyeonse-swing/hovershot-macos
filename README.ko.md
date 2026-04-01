@@ -8,7 +8,7 @@
 
 ## 현재 상태
 
-현재 macOS에서 바로 사용 가능한 수준이며, 팀 배포용 패키징 흐름도 갖춰져 있습니다.
+현재 macOS에서 바로 사용 가능한 수준입니다.
 
 ## 주요 기능
 
@@ -55,7 +55,7 @@ swift run HoverShotMac
 open dist/HoverShot.app
 ```
 
-팀 공유용 패키지 생성:
+배포용 패키지 생성:
 
 ```bash
 ./scripts/package-team-build.sh
@@ -68,13 +68,13 @@ open dist/HoverShot.app
 - `dist/HoverShot User Guide.md`
 - `dist/HoverShot User Guide (KO).md`
 
-## 추천 공유 방식
+## 배포 방식
 
-가장 현실적인 방식은 다음과 같습니다.
+권장 흐름은 다음과 같습니다.
 1. 소스 코드는 GitHub에 둡니다.
 2. `./scripts/package-team-build.sh`로 검증된 앱 패키지를 만듭니다.
 3. `dist/HoverShot-macOS.zip`을 GitHub Release에 올립니다.
-4. 비개발 팀원은 소스 대신 패키지된 앱을 사용하게 합니다.
+4. 사용자는 소스 대신 패키지된 앱을 사용하게 합니다.
 
 이 방식이면:
 - 코드와 이슈 관리는 GitHub에서 하고
@@ -83,12 +83,13 @@ open dist/HoverShot.app
 
 ## 문서
 
-- 영어 팀 배포 가이드: [docs/team-distribution.md](docs/team-distribution.md)
-- 한국어 팀 배포 가이드: [docs/team-distribution.ko.md](docs/team-distribution.ko.md)
 - 영어 사용자 가이드: [docs/user-guide.md](docs/user-guide.md)
 - 한국어 사용자 가이드: [docs/user-guide.ko.md](docs/user-guide.ko.md)
+- 영어 라이선스 메모: [docs/licensing.md](docs/licensing.md)
+- 한국어 라이선스 메모: [docs/licensing.ko.md](docs/licensing.ko.md)
 
 ## 참고
 
-- 현재 빌드는 로컬 서명 기준으로 내부/팀 테스트에 맞춰져 있습니다.
+- 현재 빌드는 로컬 서명 기준으로 테스트/개발 용도에 맞춰져 있습니다.
 - 외부 배포까지 고려하면 다음 단계는 `Developer ID 서명 + notarization`입니다.
+- 이 저장소의 소스 코드는 MIT License로 공개합니다.

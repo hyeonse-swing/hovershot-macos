@@ -4,7 +4,7 @@
 
 [한국어 문서](README.ko.md)
 
-It is a ScreenFloat-style workflow tool for:
+It is a floating screenshot and recording workflow tool for:
 - capture an area or a window
 - keep shots floating above other apps
 - annotate, search, copy, export, and organize shots
@@ -80,8 +80,11 @@ This keeps one source of truth for code, one tested binary for users, and bundle
 
 - English end-user usage guide: [docs/user-guide.md](docs/user-guide.md)
 - Korean end-user usage guide: [docs/user-guide.ko.md](docs/user-guide.ko.md)
+- English licensing notes: [docs/licensing.md](docs/licensing.md)
+- Korean licensing notes: [docs/licensing.ko.md](docs/licensing.ko.md)
 
 ## Notes
 
 - This build is locally signed for testing and development.
 - For broader distribution, the next step is `Developer ID signing + notarization`.
+- The source code in this repository is licensed under the MIT License.
