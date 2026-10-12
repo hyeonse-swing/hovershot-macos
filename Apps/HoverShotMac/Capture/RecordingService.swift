@@ -78,8 +78,7 @@ public final class RecordingService: NSObject {
     private let windowPicker = WindowPicker()
 
     private var activeSelectionSession: AreaSelectionSession?
-    private var activeRecordingSession: AnyObject?
-    private var resumeContext: RecordingResumeContext?
+    private var lifecycle = RecordingLifecycle<RecordingResumeContext>()
 
     public init(
         permissionService: PermissionService,
@@ -104,7 +103,7 @@ public final class RecordingService: NSObject {
             return
         }
 
-        guard hasOngoingRecordingSession == false else {
+        guard lifecycle.hasOngoingRecordingSession == false else {
             completion(.failure(RecordingError.recordingAlreadyInProgress))
             return
         }
@@ -121,10 +120,16 @@ public final class RecordingService: NSObject {
             return
         }
 
+        guard let startID = lifecycle.reserveNewStart() else {
+            completion(.failure(RecordingError.recordingAlreadyInProgress))
+            return
+        }
         state = .selectingArea
 
         let session = AreaSelectionSession { [weak self] result in
-            guard let self else {
+            guard let self,
+                  self.lifecycle.isPreparing(startID),
+                  self.activeSelectionSession != nil else {
                 return
             }
 
@@ -133,10 +138,10 @@ public final class RecordingService: NSObject {
             switch result {
             case let .success(area):
                 Task {
-                    await self.startRecording(area: area, completion: completion)
+                    await self.startRecording(area: area, startID: startID, completion: completion)
                 }
             case let .failure(error):
-                self.state = .idle
+                self.failStart(startID, restoring: nil)
                 if error == .selectionCancelled {
                     completion(.failure(RecordingError.selectionCancelled))
                 } else {
@@ -157,7 +162,7 @@ public final class RecordingService: NSObject {
             return
         }
 
-        guard hasOngoingRecordingSession == false else {
+        guard lifecycle.hasOngoingRecordingSession == false else {
             completion(.failure(RecordingError.recordingAlreadyInProgress))
             return
         }
@@ -174,21 +179,24 @@ public final class RecordingService: NSObject {
             return
         }
 
+        guard let startID = lifecycle.reserveNewStart() else {
+            completion(.failure(RecordingError.recordingAlreadyInProgress))
+            return
+        }
         Task {
             do {
                 let windows = try await shareableWindows()
                 guard windows.isEmpty == false else {
-                    completion(.failure(RecordingError.noShareableWindows))
-                    return
+                    throw RecordingError.noShareableWindows
                 }
 
                 guard let selectedWindow = windowPicker.chooseWindow(from: windows, purpose: "Record Window") else {
-                    completion(.failure(RecordingError.windowSelectionCancelled))
-                    return
+                    throw RecordingError.windowSelectionCancelled
                 }
 
-                await startRecording(window: selectedWindow, completion: completion)
+                await startRecording(window: selectedWindow, startID: startID, completion: completion)
             } catch {
+                failStart(startID, restoring: nil)
                 completion(.failure(error))
             }
         }
@@ -202,8 +210,18 @@ public final class RecordingService: NSObject {
             return
         }
 
-        if activeRecordingSession == nil, resumeContext != nil {
-            resumeContext = nil
+        guard lifecycle.pendingStart == nil else {
+            completion(.failure(RecordingError.noActiveRecording))
+            return
+        }
+        if case .stopping = state {
+            completion(.failure(RecordingError.noActiveRecording))
+            return
+        }
+
+        if lifecycle.activeSession == nil,
+           lifecycle.resumeContext != nil {
+            lifecycle.clearResumeContext()
             state = .idle
             completion(.success(()))
             return
@@ -211,7 +229,7 @@ public final class RecordingService: NSObject {
 
         guard
             #available(macOS 15.0, *),
-            let activeRecordingSession = activeRecordingSession as? ActiveRecordingSession
+            let activeRecordingSession = lifecycle.activeSession as? ActiveRecordingSession
         else {
             completion(.failure(RecordingError.noActiveRecording))
             return
@@ -224,7 +242,7 @@ public final class RecordingService: NSObject {
                 try await activeRecordingSession.stop()
                 completion(.success(()))
             } catch {
-                completeRecording(with: .failure(error))
+                completeRecording(with: .failure(error), session: activeRecordingSession)
                 completion(.failure(error))
             }
         }
@@ -238,9 +256,18 @@ public final class RecordingService: NSObject {
             return
         }
 
+        guard lifecycle.pendingStart == nil else {
+            completion(.failure(RecordingError.noActiveRecording))
+            return
+        }
+        if case .stopping = state {
+            completion(.failure(RecordingError.noActiveRecording))
+            return
+        }
+
         guard
             #available(macOS 15.0, *),
-            let activeRecordingSession = activeRecordingSession as? ActiveRecordingSession
+            let activeRecordingSession = lifecycle.activeSession as? ActiveRecordingSession
         else {
             completion(.failure(RecordingError.noActiveRecording))
             return
@@ -253,7 +280,7 @@ public final class RecordingService: NSObject {
                 try await activeRecordingSession.pause()
                 completion(.success(()))
             } catch {
-                completeRecording(with: .failure(error))
+                completeRecording(with: .failure(error), session: activeRecordingSession)
                 completion(.failure(error))
             }
         }
@@ -272,16 +299,21 @@ public final class RecordingService: NSObject {
             return
         }
 
-        guard activeRecordingSession == nil else {
+        guard lifecycle.activeSession == nil,
+              lifecycle.pendingStart == nil else {
             completion(.failure(RecordingError.recordingAlreadyInProgress))
             return
         }
 
-        guard let resumeContext else {
+        guard let resumeContext = lifecycle.resumeContext else {
             completion(.failure(RecordingError.noPausedRecording))
             return
         }
 
+        guard let startID = lifecycle.reserveResume() else {
+            completion(.failure(RecordingError.recordingAlreadyInProgress))
+            return
+        }
         Task {
             do {
                 let outputURL = try outputURL(
@@ -293,11 +325,12 @@ public final class RecordingService: NSObject {
                     configuration: resumeContext.configuration,
                     outputURL: outputURL,
                     outputPrefix: resumeContext.outputPrefix,
-                    nextSegmentIndex: resumeContext.nextSegmentIndex + 1
+                    nextSegmentIndex: resumeContext.nextSegmentIndex + 1,
+                    startID: startID
                 )
                 completion(.success(()))
             } catch {
-                state = .paused(resumeContext.outputPrefix)
+                failStart(startID, restoring: resumeContext)
                 completion(.failure(error))
             }
         }
@@ -313,7 +346,7 @@ public final class RecordingService: NSObject {
 
         guard
             #available(macOS 15.0, *),
-            let activeRecordingSession = activeRecordingSession as? ActiveRecordingSession
+            let activeRecordingSession = lifecycle.activeSession as? ActiveRecordingSession
         else {
             completion(.failure(RecordingError.noActiveRecording))
             return
@@ -341,15 +374,13 @@ public final class RecordingService: NSObject {
         return false
     }
 
-    private var hasOngoingRecordingSession: Bool {
-        activeRecordingSession != nil || resumeContext != nil
-    }
-
     private func startRecording(
         area: CaptureArea,
+        startID: UUID,
         completion: @escaping (Result<Void, Error>) -> Void
     ) async {
         guard #available(macOS 15.0, *) else {
+            failStart(startID, restoring: nil)
             completion(.failure(RecordingError.requiresMacOS15))
             return
         }
@@ -376,20 +407,23 @@ public final class RecordingService: NSObject {
                 configuration: configuration,
                 outputURL: outputURL,
                 outputPrefix: outputPrefix,
-                nextSegmentIndex: 2
+                nextSegmentIndex: 2,
+                startID: startID
             )
             completion(.success(()))
         } catch {
-            state = .idle
+            failStart(startID, restoring: nil)
             completion(.failure(error))
         }
     }
 
     private func startRecording(
         window: SCWindow,
+        startID: UUID,
         completion: @escaping (Result<Void, Error>) -> Void
     ) async {
         guard #available(macOS 15.0, *) else {
+            failStart(startID, restoring: nil)
             completion(.failure(RecordingError.requiresMacOS15))
             return
         }
@@ -408,11 +442,12 @@ public final class RecordingService: NSObject {
                 configuration: configuration,
                 outputURL: outputURL,
                 outputPrefix: prefix,
-                nextSegmentIndex: 2
+                nextSegmentIndex: 2,
+                startID: startID
             )
             completion(.success(()))
         } catch {
-            state = .idle
+            failStart(startID, restoring: nil)
             completion(.failure(error))
         }
     }
@@ -423,7 +458,8 @@ public final class RecordingService: NSObject {
         configuration: SCStreamConfiguration,
         outputURL: URL,
         outputPrefix: String,
-        nextSegmentIndex: Int
+        nextSegmentIndex: Int,
+        startID: UUID
     ) async throws {
         state = .starting(outputURL)
         let currentSegmentIndex = max(nextSegmentIndex - 1, 1)
@@ -432,7 +468,8 @@ public final class RecordingService: NSObject {
             sessionName: outputPrefix,
             segmentIndex: currentSegmentIndex
         )
-        resumeContext = RecordingResumeContext(
+        let previousContext = lifecycle.resumeContext
+        let nextContext = RecordingResumeContext(
             filter: filter,
             configuration: configuration,
             outputPrefix: outputPrefix,
@@ -444,35 +481,74 @@ public final class RecordingService: NSObject {
             configuration: configuration,
             outputURL: outputURL
         )
-        recordingSession.onDidStart = { [weak self] outputURL in
-            self?.state = .recording(outputURL)
+        recordingSession.onDidStart = { [weak self, weak recordingSession] outputURL in
+            guard let self, let recordingSession,
+                  self.lifecycle.acceptsDidStart(
+                    from: recordingSession,
+                    outputURL: outputURL,
+                    state: self.state
+                  ) else {
+                return
+            }
+            self.state = .recording(outputURL)
         }
-        recordingSession.onComplete = { [weak self] result in
-            self?.completeRecording(with: result)
+        recordingSession.onComplete = { [weak self, weak recordingSession] result in
+            guard let self, let recordingSession else {
+                return
+            }
+            self.completeRecording(with: result, session: recordingSession)
         }
 
-        activeRecordingSession = recordingSession
-        try await recordingSession.start()
+        guard lifecycle.install(recordingSession, context: nextContext, for: startID) else {
+            throw RecordingError.recordingAlreadyInProgress
+        }
+        do {
+            try await recordingSession.start()
+            guard lifecycle.finishStart(startID, session: recordingSession) else {
+                throw RecordingError.noActiveRecording
+            }
+        } catch {
+            failStart(startID, session: recordingSession, restoring: previousContext)
+            throw error
+        }
     }
 
-    private func completeRecording(with result: RecordingSessionResult) {
-        activeRecordingSession = nil
+    private func failStart(
+        _ startID: UUID,
+        session: AnyObject? = nil,
+        restoring previousContext: RecordingResumeContext?
+    ) {
+        guard lifecycle.failStart(startID, session: session, restoring: previousContext) else {
+            return
+        }
+
+        if let previousContext {
+            state = .paused(previousContext.outputPrefix)
+        } else {
+            state = .idle
+        }
+    }
+
+    private func completeRecording(with result: RecordingSessionResult, session: AnyObject) {
+        guard lifecycle.complete(session) else {
+            return
+        }
 
         switch result {
         case let .finished(outputURL):
+            lifecycle.clearResumeContext()
             state = .idle
-            resumeContext = nil
             onFinish?(outputURL)
         case let .paused(outputURL):
-            if let resumeContext {
+            if let resumeContext = lifecycle.resumeContext {
                 state = .paused(resumeContext.outputPrefix)
             } else {
                 state = .paused(outputURL.deletingPathExtension().lastPathComponent)
             }
             onPause?(outputURL)
         case let .failure(error):
+            lifecycle.clearResumeContext()
             state = .idle
-            resumeContext = nil
             onError?(error)
         }
     }
@@ -581,6 +657,98 @@ public final class RecordingService: NSObject {
         }
 
         return title
+    }
+}
+
+struct RecordingLifecycle<Context> {
+    private(set) var pendingStart: UUID?
+    private(set) var activeSession: AnyObject?
+    private(set) var resumeContext: Context?
+
+    var hasOngoingRecordingSession: Bool {
+        pendingStart != nil || activeSession != nil || resumeContext != nil
+    }
+
+    func isPreparing(_ startID: UUID) -> Bool {
+        pendingStart == startID
+    }
+
+    func acceptsDidStart(from session: AnyObject, outputURL: URL, state: RecordingState) -> Bool {
+        guard activeSession === session,
+              case let .starting(expectedURL) = state else {
+            return false
+        }
+        return expectedURL == outputURL
+    }
+
+    mutating func reserveNewStart() -> UUID? {
+        guard hasOngoingRecordingSession == false else {
+            return nil
+        }
+        let startID = UUID()
+        pendingStart = startID
+        return startID
+    }
+
+    mutating func reserveResume() -> UUID? {
+        guard pendingStart == nil, activeSession == nil, resumeContext != nil else {
+            return nil
+        }
+        let startID = UUID()
+        pendingStart = startID
+        return startID
+    }
+
+    mutating func install(_ session: AnyObject, context: Context, for startID: UUID) -> Bool {
+        guard pendingStart == startID, activeSession == nil else {
+            return false
+        }
+        activeSession = session
+        resumeContext = context
+        return true
+    }
+
+    mutating func finishStart(_ startID: UUID, session: AnyObject) -> Bool {
+        guard pendingStart == startID, activeSession === session else {
+            return false
+        }
+        pendingStart = nil
+        return true
+    }
+
+    @discardableResult
+    mutating func failStart(
+        _ startID: UUID,
+        session: AnyObject?,
+        restoring previousContext: Context?
+    ) -> Bool {
+        guard pendingStart == startID else {
+            return false
+        }
+        if let session {
+            guard activeSession == nil || activeSession === session else {
+                return false
+            }
+        } else if activeSession != nil {
+            return false
+        }
+        activeSession = nil
+        resumeContext = previousContext
+        pendingStart = nil
+        return true
+    }
+
+    mutating func complete(_ session: AnyObject) -> Bool {
+        guard activeSession === session else {
+            return false
+        }
+        activeSession = nil
+        pendingStart = nil
+        return true
+    }
+
+    mutating func clearResumeContext() {
+        resumeContext = nil
     }
 }
 

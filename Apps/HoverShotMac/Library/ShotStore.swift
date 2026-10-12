@@ -76,10 +76,14 @@ public final class ShotStore {
     }
 
     public func save(shots: [Shot]) throws {
+        try writeMetadata(shots: shots)
+        postStoreDidChangeNotification()
+    }
+
+    private func writeMetadata(shots: [Shot]) throws {
         try prepareStorage()
         let data = try encoder.encode(shots.sorted { $0.createdAt < $1.createdAt })
         try data.write(to: metadataURL, options: .atomic)
-        postStoreDidChangeNotification()
     }
 
     public func assetURL(for shot: Shot) -> URL {
@@ -212,13 +216,22 @@ public final class ShotStore {
             throw StoreError.shotNotFound(shotID)
         }
 
+        let originalShots = shots
         let shot = shots.remove(at: index)
         let assetURL = assetURL(for: shot)
-        if fileManager.fileExists(atPath: assetURL.path) {
-            try fileManager.removeItem(at: assetURL)
+
+        // Commit metadata before destroying the image, so a failed write cannot lose it.
+        try writeMetadata(shots: shots)
+        do {
+            if fileManager.fileExists(atPath: assetURL.path) {
+                try fileManager.removeItem(at: assetURL)
+            }
+        } catch {
+            try writeMetadata(shots: originalShots)
+            throw error
         }
 
-        try save(shots: shots)
+        postStoreDidChangeNotification()
         return shot
     }
 

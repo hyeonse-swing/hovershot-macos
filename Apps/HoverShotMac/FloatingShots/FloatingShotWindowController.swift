@@ -12,17 +12,7 @@ final class FloatingShotWindowController: NSWindowController {
         static let opacitySubmenu = NSUserInterfaceItemIdentifier("opacity-submenu")
     }
 
-    private enum Layout {
-        static let horizontalChrome: CGFloat = 24
-        static let verticalChrome: CGFloat = 74
-        static let outerMargin: CGFloat = 40
-        static let maxWidthRatio: CGFloat = 0.36
-        static let maxHeightRatio: CGFloat = 0.55
-        static let maxWidthCap: CGFloat = 820
-        static let maxHeightCap: CGFloat = 760
-        static let minimumImageWidth: CGFloat = 48
-        static let minimumImageHeight: CGFloat = 48
-    }
+    private typealias Layout = FloatingShotPlacement.Layout
 
     let shotID: UUID
 
@@ -443,38 +433,14 @@ final class FloatingShotWindowController: NSWindowController {
     private static func defaultInitialFrame(for imageSize: NSSize) -> CGRect {
         let placementScreen = preferredPlacementScreen()
         let visibleFrame = placementScreen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? CGRect(x: 160, y: 160, width: 1440, height: 900)
-        let maxImageWidth = min(visibleFrame.width * Layout.maxWidthRatio, Layout.maxWidthCap)
-        let maxImageHeight = min(visibleFrame.height * Layout.maxHeightRatio, Layout.maxHeightCap)
-
-        let fittedImageSize = fittedImageSize(
-            imageSize,
-            maxSize: NSSize(width: maxImageWidth, height: maxImageHeight)
-        )
-
-        let windowWidth = fittedImageSize.width + Layout.horizontalChrome
-        let windowHeight = fittedImageSize.height + Layout.verticalChrome
-        let origin = CGPoint(
-            x: min(visibleFrame.minX + Layout.outerMargin, max(visibleFrame.maxX - windowWidth - Layout.outerMargin, visibleFrame.minX + 16)),
-            y: max(visibleFrame.maxY - windowHeight - Layout.outerMargin, visibleFrame.minY + 16)
-        )
-
-        return CGRect(origin: origin, size: NSSize(width: windowWidth, height: windowHeight)).integral
+        return FloatingShotPlacement.defaultInitialFrame(for: imageSize, visibleFrame: visibleFrame)
     }
 
     private static func fittedImageSize(
         _ imageSize: NSSize,
         maxSize: NSSize
     ) -> NSSize {
-        let baseWidth = max(imageSize.width, 1)
-        let baseHeight = max(imageSize.height, 1)
-        let widthScale = maxSize.width / baseWidth
-        let heightScale = maxSize.height / baseHeight
-        let scale = min(widthScale, heightScale, 1)
-
-        return NSSize(
-            width: max((baseWidth * scale).rounded(), Layout.minimumImageWidth),
-            height: max((baseHeight * scale).rounded(), Layout.minimumImageHeight)
-        )
+        FloatingShotPlacement.fittedImageSize(imageSize, maxSize: maxSize)
     }
 
     private static func preferredPlacementScreen() -> NSScreen? {

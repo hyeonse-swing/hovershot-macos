@@ -73,9 +73,7 @@ public final class RecordingStore {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let baseName = sanitizedPrefix.isEmpty ? "Recording" : sanitizedPrefix
 
-        return baseDirectoryURL
-            .appendingPathComponent("\(baseName) \(timestamp)")
-            .appendingPathExtension("mp4")
+        return availableURL(baseName: "\(baseName) \(timestamp)", pathExtension: "mp4")
     }
 
     public func importRecording(from sourceURL: URL, date: Date = .now) throws -> URL {
@@ -87,16 +85,19 @@ public final class RecordingStore {
             .replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let baseName = sanitizedPrefix.isEmpty ? "Imported Recording" : sanitizedPrefix
+        let destinationName = "\(baseName) \(timestamp)"
+        let pathExtension = sourceURL.pathExtension.isEmpty ? "mp4" : sourceURL.pathExtension
         let destinationURL = baseDirectoryURL
-            .appendingPathComponent("\(baseName) \(timestamp)")
-            .appendingPathExtension(sourceURL.pathExtension.isEmpty ? "mp4" : sourceURL.pathExtension)
+            .appendingPathComponent(destinationName)
+            .appendingPathExtension(pathExtension)
 
         if sourceURL.standardizedFileURL == destinationURL.standardizedFileURL {
             return destinationURL
         }
 
-        try fileManager.copyItem(at: sourceURL, to: destinationURL)
-        return destinationURL
+        let availableDestinationURL = availableURL(baseName: destinationName, pathExtension: pathExtension)
+        try fileManager.copyItem(at: sourceURL, to: availableDestinationURL)
+        return availableDestinationURL
     }
 
     public func recordingsDirectoryURL() throws -> URL {
@@ -223,6 +224,21 @@ public final class RecordingStore {
 
     private func metadataURL(for recordingURL: URL) -> URL {
         recordingURL.appendingPathExtension("hovershot.json")
+    }
+
+    private func availableURL(baseName: String, pathExtension: String) -> URL {
+        var suffix = 1
+        while true {
+            let name = suffix == 1 ? baseName : "\(baseName) (\(suffix))"
+            let url = baseDirectoryURL
+                .appendingPathComponent(name)
+                .appendingPathExtension(pathExtension)
+            if !fileManager.fileExists(atPath: url.path)
+                && !fileManager.fileExists(atPath: metadataURL(for: url).path) {
+                return url
+            }
+            suffix += 1
+        }
     }
 
     private func loadMetadata(for recordingURL: URL) throws -> RecordingMetadata {

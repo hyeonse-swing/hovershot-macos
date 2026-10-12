@@ -1,5 +1,6 @@
 import AppKit
 import Analysis
+import CoreGraphics
 import Foundation
 import Library
 import ScreenCaptureKit
@@ -281,9 +282,14 @@ public final class CaptureService {
 
     private func capture(area: CaptureArea) async -> Result<Shot, Error> {
         do {
+            let displayID = area.displayID
             let image = try await captureImage(for: area)
             let title = "Capture \(titleFormatter.string(from: .now))"
-            let shot = try shotStore.createShot(image: image, title: title)
+            let shot = try shotStore.createShot(
+                image: image,
+                title: title,
+                floatingState: floatingState(for: image, displayID: displayID)
+            )
             captureAreaStore.save(area)
             enrichShotWithRecognizedText(shotID: shot.id, image: image)
             return .success(shot)
@@ -294,19 +300,38 @@ public final class CaptureService {
 
     private func capture(window: SCWindow) async -> Result<Shot, Error> {
         do {
+            // SCWindow.frame and CGDisplayBounds share Quartz's global display coordinates.
+            let displays = NSScreen.screens.compactMap { screen -> CapturePlacement.Display? in
+                guard let id = screen.screenHoveringDisplayID else { return nil }
+                return CapturePlacement.Display(id: id, bounds: CGDisplayBounds(id))
+            }
+            let displayID = CapturePlacement.displayID(for: window.frame, displays: displays)
             let image = try await captureImage(for: window)
             let appName = window.owningApplication?.applicationName ?? "Window"
             let windowTitle = window.title?.trimmingCharacters(in: .whitespacesAndNewlines)
             let suffix = (windowTitle?.isEmpty == false ? windowTitle! : "Untitled")
             let shot = try shotStore.createShot(
                 image: image,
-                title: "\(appName) - \(suffix)"
+                title: "\(appName) - \(suffix)",
+                floatingState: floatingState(for: image, displayID: displayID)
             )
             enrichShotWithRecognizedText(shotID: shot.id, image: image)
             return .success(shot)
         } catch {
             return .failure(error)
         }
+    }
+
+    private func floatingState(for image: NSImage, displayID: CGDirectDisplayID?) -> FloatingShotState {
+        guard let displayID,
+              let screen = NSScreen.screens.first(where: { $0.screenHoveringDisplayID == displayID }) else {
+            return FloatingShotState()
+        }
+        let frame = FloatingShotPlacement.defaultInitialFrame(
+            for: image.size,
+            visibleFrame: screen.visibleFrame
+        )
+        return FloatingShotState(frame: ShotRect(frame))
     }
 
     private func enrichShotWithRecognizedText(shotID: UUID, image: NSImage) {
