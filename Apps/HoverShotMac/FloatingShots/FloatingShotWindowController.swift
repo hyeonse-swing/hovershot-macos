@@ -80,6 +80,9 @@ final class FloatingShotWindowController: NSWindowController {
 
         panel.contentView = contentView
         configureSizing(for: panel, imageSize: image.size)
+        // AppKit can reposition a new panel onto another screen during initialization.
+        // Reapply the global capture/saved frame before clamping to the panel's screen.
+        panel.setFrame(initialFrame, display: false)
         clampWindowFrameToVisibleScreen(for: panel, animated: false)
         refreshContextMenus()
         installWindowObservers(for: panel)

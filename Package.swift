@@ -17,7 +17,7 @@ let package = Package(
     targets: [
         .testTarget(
             name: "HoverShotUXTests",
-            dependencies: ["Library", "Capture", "Editing"],
+            dependencies: ["Library", "Capture", "Editing", "FloatingShots"],
             path: "Tests/HoverShotUXTests"
         ),
         .target(

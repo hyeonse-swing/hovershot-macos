@@ -7,7 +7,7 @@ CONFIGURATION="${1:-debug}"
 APP_NAME="HoverShot"
 EXECUTABLE_NAME="HoverShotMac"
 BUNDLE_ID="app.hovershot.mac"
-VERSION="0.2.1"
+VERSION="0.2.2"
 ICON_SCRIPT="$ROOT_DIR/scripts/generate-app-icon.swift"
 cd "$ROOT_DIR"
 SWIFT_BUILD_OPTIONS=()
@@ -86,7 +86,7 @@ cat > "$INFO_PLIST" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>3</string>
+  <string>4</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
