@@ -7,12 +7,15 @@ CONFIGURATION="${1:-debug}"
 APP_NAME="HoverShot"
 EXECUTABLE_NAME="HoverShotMac"
 BUNDLE_ID="app.hovershot.mac"
-VERSION="0.2.0"
+VERSION="0.2.1"
 ICON_SCRIPT="$ROOT_DIR/scripts/generate-app-icon.swift"
 cd "$ROOT_DIR"
 SWIFT_BUILD_OPTIONS=()
 if [[ "${HOVERSHOT_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
   SWIFT_BUILD_OPTIONS+=(--disable-sandbox)
+fi
+if [[ -n "${HOVERSHOT_BUILD_SYSTEM:-}" ]]; then
+  SWIFT_BUILD_OPTIONS+=(--build-system "$HOVERSHOT_BUILD_SYSTEM")
 fi
 swift build "${SWIFT_BUILD_OPTIONS[@]}" -c "$CONFIGURATION" >/dev/null
 BUILD_DIR="$(swift build "${SWIFT_BUILD_OPTIONS[@]}" -c "$CONFIGURATION" --show-bin-path)"
@@ -83,7 +86,7 @@ cat > "$INFO_PLIST" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>2</string>
+  <string>3</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
