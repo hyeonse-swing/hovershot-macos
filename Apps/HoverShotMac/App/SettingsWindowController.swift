@@ -6,6 +6,8 @@ import Shared
 final class SettingsWindowController: NSWindowController {
     var onDidUpdateShortcuts: (([HotKeyAction: HotKeyShortcut]) -> Void)?
 
+    private static let preferredWindowSize = NSSize(width: 760, height: 680)
+
     private struct RowControls {
         let recordButton: NSButton
         let clearButton: NSButton
@@ -25,7 +27,7 @@ final class SettingsWindowController: NSWindowController {
         self.shortcuts = store.load()
 
         let window = NSWindow(
-            contentRect: NSRect(x: 280, y: 220, width: 760, height: 680),
+            contentRect: NSRect(origin: NSPoint(x: 280, y: 220), size: Self.preferredWindowSize),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -38,6 +40,8 @@ final class SettingsWindowController: NSWindowController {
         super.init(window: window)
 
         configureWindow()
+        NotificationCenter.default.addObserver(self, selector: #selector(cancelRecordingForWindowChange), name: NSWindow.didResignKeyNotification, object: window)
+        NotificationCenter.default.addObserver(self, selector: #selector(handleWindowWillClose), name: NSWindow.willCloseNotification, object: window)
         installKeyMonitor()
         refreshRows()
     }
@@ -47,9 +51,18 @@ final class SettingsWindowController: NSWindowController {
         nil
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     func present() {
+        statusField.stringValue = "Choose global shortcuts for the actions you use most. Changes apply immediately."
+        installKeyMonitor()
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
+        if let window {
+            BrowserWindowFrameHelper.normalizeFrame(of: window, preferredSize: Self.preferredWindowSize)
+            window.makeKeyAndOrderFront(nil)
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -63,6 +76,7 @@ final class SettingsWindowController: NSWindowController {
         window.contentView = contentView
 
         statusField.font = .systemFont(ofSize: 14, weight: .semibold)
+        statusField.textColor = .labelColor
         statusField.lineBreakMode = .byWordWrapping
         statusField.maximumNumberOfLines = 2
         statusField.translatesAutoresizingMaskIntoConstraints = false
@@ -159,6 +173,7 @@ final class SettingsWindowController: NSWindowController {
         clearButton.bezelStyle = .rounded
         clearButton.translatesAutoresizingMaskIntoConstraints = false
         clearButton.identifier = NSUserInterfaceItemIdentifier(action.rawValue)
+        clearButton.setAccessibilityLabel("Clear shortcut for \(action.displayName)")
 
         let row = NSStackView(views: [titleField, recordButton, clearButton])
         row.orientation = .horizontal
@@ -185,12 +200,16 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func handleKeyDown(_ event: NSEvent) -> NSEvent? {
-        guard let action = activeRecordingAction else {
+        guard let action = activeRecordingAction,
+              let window,
+              window.isKeyWindow,
+              event.window === window else {
             return event
         }
 
         if event.keyCode == UInt16(kVK_Escape) {
             activeRecordingAction = nil
+            statusField.stringValue = "Shortcut recording cancelled."
             refreshRows()
             return nil
         }
@@ -204,6 +223,7 @@ final class SettingsWindowController: NSWindowController {
             modifierFlags: event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         ) else {
             NSSound.beep()
+            statusField.stringValue = "Include Command, Control, Option, or Shift with the key for \(action.displayName)."
             return nil
         }
 
@@ -212,13 +232,20 @@ final class SettingsWindowController: NSWindowController {
     }
 
     private func assignShortcut(_ shortcut: HotKeyShortcut, to action: HotKeyAction) {
+        var reassignedFrom: HotKeyAction?
         for (otherAction, otherShortcut) in shortcuts where otherAction != action && otherShortcut == shortcut {
             shortcuts.removeValue(forKey: otherAction)
+            reassignedFrom = otherAction
         }
 
         shortcuts[action] = shortcut
         activeRecordingAction = nil
         persistChanges()
+        if let reassignedFrom {
+            statusField.stringValue = "\(shortcut.displayString) saved for \(action.displayName); removed from \(reassignedFrom.displayName)."
+        } else {
+            statusField.stringValue = "\(shortcut.displayString) saved for \(action.displayName)."
+        }
         refreshRows()
     }
 
@@ -236,9 +263,11 @@ final class SettingsWindowController: NSWindowController {
             if activeRecordingAction == action {
                 row.recordButton.title = "Type Shortcut..."
                 row.recordButton.state = .on
+                row.recordButton.setAccessibilityLabel("Recording shortcut for \(action.displayName)")
             } else {
                 row.recordButton.title = HotKeyFormatter.string(for: shortcuts[action])
                 row.recordButton.state = .off
+                row.recordButton.setAccessibilityLabel("Record shortcut for \(action.displayName), current \(row.recordButton.title)")
             }
 
             row.clearButton.isEnabled = shortcuts[action] != nil
@@ -254,7 +283,13 @@ final class SettingsWindowController: NSWindowController {
             return
         }
 
-        activeRecordingAction = activeRecordingAction == action ? nil : action
+        if activeRecordingAction == action {
+            activeRecordingAction = nil
+            statusField.stringValue = "Shortcut recording cancelled."
+        } else {
+            activeRecordingAction = action
+            statusField.stringValue = "Type a shortcut for \(action.displayName). Press Esc to cancel."
+        }
         refreshRows()
     }
 
@@ -268,10 +303,9 @@ final class SettingsWindowController: NSWindowController {
         }
 
         shortcuts.removeValue(forKey: action)
-        if activeRecordingAction == action {
-            activeRecordingAction = nil
-        }
+        activeRecordingAction = nil
         persistChanges()
+        statusField.stringValue = "Shortcut cleared for \(action.displayName)."
         refreshRows()
     }
 
@@ -280,6 +314,7 @@ final class SettingsWindowController: NSWindowController {
         shortcuts = store.resetToDefaults()
         activeRecordingAction = nil
         onDidUpdateShortcuts?(shortcuts)
+        statusField.stringValue = "Default shortcuts restored."
         refreshRows()
     }
 
@@ -288,5 +323,25 @@ final class SettingsWindowController: NSWindowController {
         activeRecordingAction = nil
         refreshRows()
         close()
+    }
+
+    @objc
+    private func cancelRecordingForWindowChange() {
+        guard activeRecordingAction != nil else {
+            return
+        }
+
+        activeRecordingAction = nil
+        statusField.stringValue = "Shortcut recording cancelled."
+        refreshRows()
+    }
+
+    @objc
+    private func handleWindowWillClose() {
+        cancelRecordingForWindowChange()
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
     }
 }

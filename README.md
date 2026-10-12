@@ -26,6 +26,14 @@ Implemented highlights:
 - recording browser with trim and GIF export
 - configurable global shortcuts from `Settings...`
 
+## 0.2.0 usability improvements
+
+- Search counts, clear-filter recovery, and helpful empty states
+- Scrollable details at smaller window sizes and easier-to-reach shot actions
+- Unsaved metadata preserved when switching items, searching, and refreshing
+- Save confirmation on window close and app quit; failed annotation saves retain edits
+- Shortcut capture stays inside Settings, with assignment feedback
+
 ## Features
 
 - Area capture

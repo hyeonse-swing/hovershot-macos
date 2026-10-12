@@ -15,6 +15,11 @@ let package = Package(
         )
     ],
     targets: [
+        .testTarget(
+            name: "HoverShotUXTests",
+            dependencies: ["Library", "Capture", "Editing"],
+            path: "Tests/HoverShotUXTests"
+        ),
         .target(
             name: "Shared",
             path: "Apps/HoverShotMac/Shared"

@@ -7,10 +7,15 @@ CONFIGURATION="${1:-debug}"
 APP_NAME="HoverShot"
 EXECUTABLE_NAME="HoverShotMac"
 BUNDLE_ID="app.hovershot.mac"
-VERSION="0.1.0"
+VERSION="0.2.0"
+ICON_SCRIPT="$ROOT_DIR/scripts/generate-app-icon.swift"
 cd "$ROOT_DIR"
-swift build -c "$CONFIGURATION" >/dev/null
-BUILD_DIR="$(swift build -c "$CONFIGURATION" --show-bin-path)"
+SWIFT_BUILD_OPTIONS=()
+if [[ "${HOVERSHOT_DISABLE_SWIFTPM_SANDBOX:-0}" == "1" ]]; then
+  SWIFT_BUILD_OPTIONS+=(--disable-sandbox)
+fi
+swift build "${SWIFT_BUILD_OPTIONS[@]}" -c "$CONFIGURATION" >/dev/null
+BUILD_DIR="$(swift build "${SWIFT_BUILD_OPTIONS[@]}" -c "$CONFIGURATION" --show-bin-path)"
 EXECUTABLE_PATH="$BUILD_DIR/$EXECUTABLE_NAME"
 DIST_DIR="$ROOT_DIR/dist"
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
@@ -18,6 +23,9 @@ CONTENTS_DIR="$APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 INFO_PLIST="$CONTENTS_DIR/Info.plist"
+GENERATED_RESOURCES_DIR="$ROOT_DIR/.build/generated-resources"
+ICON_PATH="$GENERATED_RESOURCES_DIR/${APP_NAME}.icns"
+ICON_PREVIEW_PATH="$GENERATED_RESOURCES_DIR/${APP_NAME}-icon-preview.png"
 PREFERRED_SIGN_IDENTITY="HoverShot Local Development"
 SIGN_IDENTITY="${HOVERSHOT_CODESIGN_IDENTITY:-${CODE_SIGN_IDENTITY:-}}"
 
@@ -47,6 +55,10 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$EXECUTABLE_NAME"
 chmod +x "$MACOS_DIR/$EXECUTABLE_NAME"
 
+mkdir -p "$GENERATED_RESOURCES_DIR"
+swift "$ICON_SCRIPT" "$ICON_PATH" "$ICON_PREVIEW_PATH"
+cp "$ICON_PATH" "$RESOURCES_DIR/${APP_NAME}.icns"
+
 cat > "$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -58,6 +70,8 @@ cat > "$INFO_PLIST" <<PLIST
   <string>${APP_NAME}</string>
   <key>CFBundleExecutable</key>
   <string>${EXECUTABLE_NAME}</string>
+  <key>CFBundleIconFile</key>
+  <string>${APP_NAME}</string>
   <key>CFBundleIdentifier</key>
   <string>${BUNDLE_ID}</string>
   <key>CFBundleInfoDictionaryVersion</key>
@@ -69,7 +83,7 @@ cat > "$INFO_PLIST" <<PLIST
   <key>CFBundleShortVersionString</key>
   <string>${VERSION}</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>2</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>LSUIElement</key>
@@ -97,5 +111,9 @@ else
   echo "Set HOVERSHOT_CODESIGN_IDENTITY or CODE_SIGN_IDENTITY to a stable signing identity to keep permissions across builds."
 fi
 
+codesign --verify --deep --strict "$APP_BUNDLE"
+
 echo "Built app bundle:"
 echo "$APP_BUNDLE"
+echo "Icon preview:"
+echo "$ICON_PREVIEW_PATH"

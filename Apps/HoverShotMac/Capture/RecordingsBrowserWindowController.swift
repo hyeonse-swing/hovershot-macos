@@ -57,6 +57,9 @@ public final class RecordingsBrowserWindowController: NSWindowController {
     private let openFolderButton = NSButton(title: "Open Folder", target: nil, action: nil)
     private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
     private let emptyLabel = NSTextField(labelWithString: "No recordings match the current filter.")
+    private let clearFiltersButton = NSButton(title: "Clear Filters", target: nil, action: nil)
+    private let resultCountField = NSTextField(labelWithString: "")
+    private let saveStatusField = NSTextField(labelWithString: "")
     private var reloadTask: Task<Void, Never>?
     private var trimWindowControllers: [String: RecordingTrimWindowController] = [:]
 
@@ -64,6 +67,26 @@ public final class RecordingsBrowserWindowController: NSWindowController {
     private var filteredRecordings: [RecordingItem] = []
     private var selectedRecordingID: String?
     private var isUpdatingMetadataForm = false
+    private struct MetadataDraft: Equatable {
+        var title: String
+        var notes: String
+        var isFavorite: Bool
+
+        init(title: String, notes: String, isFavorite: Bool) {
+            self.title = title
+            self.notes = notes
+            self.isFavorite = isFavorite
+        }
+
+        init(_ recording: RecordingItem) {
+            title = recording.title
+            notes = recording.notes ?? ""
+            isFavorite = recording.isFavorite
+        }
+    }
+    private var displayedMetadata: MetadataDraft?
+    private var metadataDrafts: [String: MetadataDraft] = [:]
+    private var recentlySavedRecordingID: String?
 
     private let relativeDateFormatter = RelativeDateTimeFormatter()
     private let absoluteDateFormatter = DateFormatter()
@@ -80,10 +103,12 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         )
         window.title = "Recordings Browser"
         window.identifier = NSUserInterfaceItemIdentifier("recordings-browser")
+        window.minSize = NSSize(width: 640, height: 420)
         window.setFrameAutosaveName("RecordingsBrowser")
         BrowserWindowFrameHelper.prepareForStandardBrowserBehavior(window)
 
         super.init(window: window)
+        window.delegate = self
 
         absoluteDateFormatter.dateStyle = .medium
         absoluteDateFormatter.timeStyle = .short
@@ -122,27 +147,12 @@ public final class RecordingsBrowserWindowController: NSWindowController {
 
                 allRecordings = recordings
                 applyFilter()
-
-                if let previousSelection,
-                   let index = filteredRecordings.firstIndex(where: { $0.id == previousSelection }) {
-                    tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-                } else if filteredRecordings.isEmpty == false {
-                    tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-                } else {
-                    tableView.deselectAll(nil)
-                    selectedRecordingID = nil
-                    updateDetail(for: nil)
-                }
+                selectRecording(id: previousSelection)
             } catch {
                 guard Task.isCancelled == false else {
                     return
                 }
 
-                allRecordings = []
-                applyFilter()
-                tableView.deselectAll(nil)
-                selectedRecordingID = nil
-                updateDetail(for: nil)
                 presentErrorAlert(message: "Failed to load recordings.", detail: error.localizedDescription)
             }
         }
@@ -176,6 +186,7 @@ public final class RecordingsBrowserWindowController: NSWindowController {
 
         let sidebar = makeSidebarView()
         let detail = makeDetailView()
+        detail.widthAnchor.constraint(greaterThanOrEqualToConstant: 320).isActive = true
         splitView.addArrangedSubview(sidebar)
         splitView.addArrangedSubview(detail)
         splitView.setPosition(320, ofDividerAt: 0)
@@ -187,11 +198,13 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         container.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
 
         searchField.placeholderString = "Search titles, notes, files"
+        searchField.setAccessibilityLabel("Search recordings")
         searchField.delegate = self
         searchField.translatesAutoresizingMaskIntoConstraints = false
         scopePopUpButton.translatesAutoresizingMaskIntoConstraints = false
         scopePopUpButton.target = self
         scopePopUpButton.action = #selector(handleScopeChanged)
+        scopePopUpButton.setAccessibilityLabel("Filter recordings")
         FilterScope.allCases.forEach { scopePopUpButton.addItem(withTitle: $0.title) }
         scopePopUpButton.selectItem(at: FilterScope.all.rawValue)
 
@@ -211,17 +224,33 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         tableView.delegate = self
         tableView.dataSource = self
         tableView.selectionHighlightStyle = .regular
+        tableView.setAccessibilityLabel("Recordings list")
+        tableView.target = self
+        tableView.doubleAction = #selector(handleOpenSelectedRecording)
         scrollView.documentView = tableView
+
+        resultCountField.textColor = .secondaryLabelColor
+        resultCountField.font = .systemFont(ofSize: 11)
+        resultCountField.setAccessibilityLabel("Recording result count")
+        resultCountField.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.alignment = .center
+        emptyLabel.maximumNumberOfLines = 3
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        clearFiltersButton.target = self
+        clearFiltersButton.action = #selector(handleClearFilters)
+        clearFiltersButton.isHidden = true
+        clearFiltersButton.setAccessibilityLabel("Clear recording search and filter")
+        clearFiltersButton.translatesAutoresizingMaskIntoConstraints = false
 
         container.addSubview(searchField)
         container.addSubview(scopePopUpButton)
+        container.addSubview(resultCountField)
         container.addSubview(scrollView)
         container.addSubview(emptyLabel)
+        container.addSubview(clearFiltersButton)
 
         NSLayoutConstraint.activate([
             searchField.topAnchor.constraint(equalTo: container.topAnchor, constant: 16),
@@ -232,21 +261,34 @@ public final class RecordingsBrowserWindowController: NSWindowController {
             scopePopUpButton.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
             scopePopUpButton.trailingAnchor.constraint(equalTo: searchField.trailingAnchor),
 
-            scrollView.topAnchor.constraint(equalTo: scopePopUpButton.bottomAnchor, constant: 12),
+            resultCountField.topAnchor.constraint(equalTo: scopePopUpButton.bottomAnchor, constant: 10),
+            resultCountField.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
+            resultCountField.trailingAnchor.constraint(equalTo: searchField.trailingAnchor),
+
+            scrollView.topAnchor.constraint(equalTo: resultCountField.bottomAnchor, constant: 8),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
 
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: -18),
+            emptyLabel.widthAnchor.constraint(lessThanOrEqualTo: scrollView.widthAnchor, constant: -32),
+            clearFiltersButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 10),
+            clearFiltersButton.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor)
         ])
 
         return container
     }
 
     private func makeDetailView() -> NSView {
+        let detailScrollView = NSScrollView()
+        detailScrollView.hasVerticalScroller = true
+        detailScrollView.drawsBackground = false
+        detailScrollView.translatesAutoresizingMaskIntoConstraints = false
+
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
+        detailScrollView.documentView = container
 
         playerView.controlsStyle = .floating
         playerView.videoGravity = .resizeAspect
@@ -256,6 +298,8 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         playerView.translatesAutoresizingMaskIntoConstraints = false
 
         titleField.placeholderString = "Recording title"
+        titleField.setAccessibilityLabel("Recording title")
+        titleField.delegate = self
         titleField.font = .systemFont(ofSize: 22, weight: .semibold)
         titleField.lineBreakMode = .byTruncatingTail
         titleField.isBordered = false
@@ -263,8 +307,6 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         titleField.isEditable = true
         titleField.isSelectable = true
         titleField.focusRingType = .default
-        titleField.target = self
-        titleField.action = #selector(handleSaveDetails)
         metadataField.textColor = .secondaryLabelColor
         locationField.textColor = .secondaryLabelColor
         locationField.lineBreakMode = .byTruncatingMiddle
@@ -272,6 +314,8 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         notesTextView.isAutomaticQuoteSubstitutionEnabled = false
         notesTextView.isAutomaticDashSubstitutionEnabled = false
         notesTextView.font = .systemFont(ofSize: 13, weight: .regular)
+        notesTextView.setAccessibilityLabel("Recording notes")
+        notesTextView.delegate = self
         notesTextView.drawsBackground = false
         notesScrollView.drawsBackground = true
         notesScrollView.borderType = .bezelBorder
@@ -286,6 +330,9 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         saveDetailsButton.target = self
         saveDetailsButton.action = #selector(handleSaveDetails)
         saveDetailsButton.translatesAutoresizingMaskIntoConstraints = false
+        saveStatusField.textColor = .secondaryLabelColor
+        saveStatusField.font = .systemFont(ofSize: 11)
+        saveStatusField.translatesAutoresizingMaskIntoConstraints = false
 
         [titleField, metadataField, locationField].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
@@ -304,10 +351,24 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         openFolderButton.action = #selector(handleOpenFolder)
         refreshButton.action = #selector(handleRefresh)
 
-        let buttonRow = NSStackView(views: [openButton, trimButton, exportGIFButton, revealButton, deleteButton, openFolderButton, refreshButton])
-        buttonRow.orientation = .horizontal
-        buttonRow.spacing = 10
-        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        let buttonRows: [[NSButton]] = [
+            [openButton, trimButton],
+            [exportGIFButton, revealButton],
+            [deleteButton, openFolderButton],
+            [refreshButton]
+        ]
+        let buttonStack = NSStackView()
+        buttonStack.orientation = .vertical
+        buttonStack.spacing = 8
+        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        buttonRows.forEach { buttons in
+            let row = NSStackView(views: buttons)
+            row.orientation = .horizontal
+            row.distribution = .fillEqually
+            row.spacing = 8
+            buttonStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: buttonStack.widthAnchor).isActive = true
+        }
 
         let metadataEditorGrid = NSGridView(views: [
             [makeEditorLabel("Favorite"), favoriteButton],
@@ -317,8 +378,9 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         metadataEditorGrid.columnSpacing = 14
         metadataEditorGrid.translatesAutoresizingMaskIntoConstraints = false
 
-        let metadataActionRow = NSStackView(views: [saveDetailsButton])
+        let metadataActionRow = NSStackView(views: [saveDetailsButton, saveStatusField])
         metadataActionRow.orientation = .horizontal
+        metadataActionRow.spacing = 10
         metadataActionRow.alignment = .leading
         metadataActionRow.translatesAutoresizingMaskIntoConstraints = false
 
@@ -331,13 +393,14 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         container.addSubview(infoStack)
         container.addSubview(metadataEditorGrid)
         container.addSubview(metadataActionRow)
-        container.addSubview(buttonRow)
+        container.addSubview(buttonStack)
 
         NSLayoutConstraint.activate([
+            container.widthAnchor.constraint(equalTo: detailScrollView.contentView.widthAnchor),
             playerView.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             playerView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             playerView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-            playerView.heightAnchor.constraint(greaterThanOrEqualToConstant: 360),
+            playerView.heightAnchor.constraint(equalToConstant: 260),
 
             infoStack.topAnchor.constraint(equalTo: playerView.bottomAnchor, constant: 20),
             infoStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
@@ -349,17 +412,20 @@ public final class RecordingsBrowserWindowController: NSWindowController {
 
             metadataActionRow.topAnchor.constraint(equalTo: metadataEditorGrid.bottomAnchor, constant: 12),
             metadataActionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            metadataActionRow.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
 
-            buttonRow.topAnchor.constraint(equalTo: metadataActionRow.bottomAnchor, constant: 18),
-            buttonRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            buttonRow.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -24)
+            buttonStack.topAnchor.constraint(equalTo: metadataActionRow.bottomAnchor, constant: 18),
+            buttonStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            buttonStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
+            buttonStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24)
         ])
 
         updateButtons(enabled: false)
-        return container
+        return detailScrollView
     }
 
     private func applyFilter() {
+        captureMetadataDraft()
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let scope = FilterScope(rawValue: scopePopUpButton.indexOfSelectedItem) ?? .all
 
@@ -383,6 +449,58 @@ public final class RecordingsBrowserWindowController: NSWindowController {
 
         tableView.reloadData()
         emptyLabel.isHidden = filteredRecordings.isEmpty == false
+        emptyLabel.stringValue = allRecordings.isEmpty
+            ? "No recordings yet. Saved videos will appear here."
+            : "No recordings match your search or filter."
+        clearFiltersButton.isHidden = allRecordings.isEmpty || filteredRecordings.isEmpty == false
+        resultCountField.stringValue = query.isEmpty && scope == .all
+            ? "\(allRecordings.count) recording\(allRecordings.count == 1 ? "" : "s")"
+            : "\(filteredRecordings.count) of \(allRecordings.count) recordings"
+    }
+
+    private func currentMetadataDraft() -> MetadataDraft {
+        MetadataDraft(
+            title: titleField.stringValue,
+            notes: notesTextView.string,
+            isFavorite: favoriteButton.state == .on
+        )
+    }
+
+    private func captureMetadataDraft() {
+        guard isUpdatingMetadataForm == false,
+              let selectedRecordingID,
+              let displayedMetadata else {
+            return
+        }
+
+        let current = currentMetadataDraft()
+        metadataDrafts[selectedRecordingID] = current == displayedMetadata ? nil : current
+        window?.isDocumentEdited = metadataDrafts.isEmpty == false
+        if metadataDrafts[selectedRecordingID] != nil {
+            recentlySavedRecordingID = nil
+        }
+        saveStatusField.stringValue = metadataDrafts[selectedRecordingID] == nil
+            ? (recentlySavedRecordingID == selectedRecordingID ? "Details saved" : "")
+            : "Unsaved changes"
+    }
+
+    private func selectRecording(id: String?) {
+        if let id, let index = filteredRecordings.firstIndex(where: { $0.id == id }) {
+            if selectedRecordingID != id { recentlySavedRecordingID = nil }
+            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+            selectedRecordingID = id
+            updateDetail(for: filteredRecordings[index])
+        } else if let first = filteredRecordings.first {
+            if selectedRecordingID != first.id { recentlySavedRecordingID = nil }
+            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            selectedRecordingID = first.id
+            updateDetail(for: first)
+        } else {
+            recentlySavedRecordingID = nil
+            tableView.deselectAll(nil)
+            selectedRecordingID = nil
+            updateDetail(for: nil)
+        }
     }
 
     private func selectedRecording() -> RecordingItem? {
@@ -404,6 +522,9 @@ public final class RecordingsBrowserWindowController: NSWindowController {
             locationField.stringValue = ""
             favoriteButton.state = .off
             notesTextView.string = ""
+            displayedMetadata = nil
+            saveStatusField.stringValue = ""
+            window?.isDocumentEdited = metadataDrafts.isEmpty == false
             isUpdatingMetadataForm = false
             updateButtons(enabled: false)
             return
@@ -412,11 +533,17 @@ public final class RecordingsBrowserWindowController: NSWindowController {
         isUpdatingMetadataForm = true
         playerView.player?.pause()
         playerView.player = AVPlayer(url: recording.url)
-        titleField.stringValue = recording.title
+        displayedMetadata = MetadataDraft(recording)
+        let metadata = metadataDrafts[recording.id] ?? MetadataDraft(recording)
+        titleField.stringValue = metadata.title
         metadataField.stringValue = metadataString(for: recording)
         locationField.stringValue = recording.url.path
-        favoriteButton.state = recording.isFavorite ? .on : .off
-        notesTextView.string = recording.notes ?? ""
+        favoriteButton.state = metadata.isFavorite ? .on : .off
+        notesTextView.string = metadata.notes
+        saveStatusField.stringValue = metadataDrafts[recording.id] == nil
+            ? (recentlySavedRecordingID == recording.id ? "Details saved" : "")
+            : "Unsaved changes"
+        window?.isDocumentEdited = metadataDrafts.isEmpty == false
         isUpdatingMetadataForm = false
         updateButtons(enabled: true)
     }
@@ -528,6 +655,8 @@ public final class RecordingsBrowserWindowController: NSWindowController {
             self?.trimWindowControllers[recordingID] = nil
         }
         controller.onDidExport = { [weak self] outputURL in
+            self?.captureMetadataDraft()
+            self?.displayedMetadata = nil
             self?.selectedRecordingID = outputURL.path
             self?.reloadRecordings(preservingSelection: true)
         }
@@ -577,6 +706,9 @@ public final class RecordingsBrowserWindowController: NSWindowController {
 
         do {
             try recordingStore.delete(recording)
+            metadataDrafts[recording.id] = nil
+            window?.isDocumentEdited = metadataDrafts.isEmpty == false
+            selectedRecordingID = nil
             reloadRecordings(preservingSelection: false)
         } catch {
             presentErrorAlert(message: "Failed to delete recording.", detail: error.localizedDescription)
@@ -603,15 +735,23 @@ public final class RecordingsBrowserWindowController: NSWindowController {
             return
         }
 
+        captureMetadataDraft()
+        let metadata = currentMetadataDraft()
         do {
             try recordingStore.updateMetadata(
                 for: recording.url,
-                title: titleField.stringValue,
-                notes: notesTextView.string,
-                isFavorite: favoriteButton.state == .on
+                title: metadata.title,
+                notes: metadata.notes,
+                isFavorite: metadata.isFavorite
             )
+            metadataDrafts[recording.id] = nil
+            displayedMetadata = metadata
+            window?.isDocumentEdited = metadataDrafts.isEmpty == false
+            recentlySavedRecordingID = recording.id
+            saveStatusField.stringValue = "Details saved"
             reloadRecordings()
         } catch {
+            saveStatusField.stringValue = "Could not save details"
             presentErrorAlert(message: "Failed to save recording details.", detail: error.localizedDescription)
         }
     }
@@ -622,37 +762,105 @@ public final class RecordingsBrowserWindowController: NSWindowController {
             return
         }
 
-        handleSaveDetails()
+        captureMetadataDraft()
     }
 
     @objc
     private func handleScopeChanged() {
+        let previousSelection = selectedRecordingID
         applyFilter()
+        selectRecording(id: previousSelection)
+    }
 
-        if let selectedRecordingID,
-           let index = filteredRecordings.firstIndex(where: { $0.id == selectedRecordingID }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        } else if filteredRecordings.isEmpty == false {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        } else {
-            selectedRecordingID = nil
-            updateDetail(for: nil)
-        }
+    @objc
+    private func handleClearFilters() {
+        let previousSelection = selectedRecordingID
+        searchField.stringValue = ""
+        scopePopUpButton.selectItem(at: FilterScope.all.rawValue)
+        applyFilter()
+        selectRecording(id: previousSelection)
     }
 }
 
 extension RecordingsBrowserWindowController: NSSearchFieldDelegate {
     public func controlTextDidChange(_ obj: Notification) {
-        applyFilter()
+        guard let field = obj.object as? NSTextField, field === searchField else {
+            captureMetadataDraft()
+            return
+        }
 
-        if let selectedRecordingID,
-           let index = filteredRecordings.firstIndex(where: { $0.id == selectedRecordingID }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        } else if filteredRecordings.isEmpty == false {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
-        } else {
-            selectedRecordingID = nil
-            updateDetail(for: nil)
+        let previousSelection = selectedRecordingID
+        applyFilter()
+        selectRecording(id: previousSelection)
+    }
+}
+
+extension RecordingsBrowserWindowController: NSTextViewDelegate {
+    public func textDidChange(_ notification: Notification) {
+        captureMetadataDraft()
+    }
+}
+
+extension RecordingsBrowserWindowController: NSWindowDelegate {
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        captureMetadataDraft()
+        guard metadataDrafts.isEmpty == false else {
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Save recording details before closing?"
+        alert.informativeText = "You have unsaved changes to one or more recordings."
+        alert.addButton(withTitle: "Save All")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard Changes")
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            var savedAny = false
+            do {
+                for (id, metadata) in Array(metadataDrafts) {
+                    guard let recording = allRecordings.first(where: { $0.id == id }) else {
+                        throw NSError(
+                            domain: "HoverShot.RecordingsBrowser",
+                            code: 1,
+                            userInfo: [NSLocalizedDescriptionKey: "A changed recording is no longer in the library."]
+                        )
+                    }
+                    try recordingStore.updateMetadata(
+                        for: recording.url,
+                        title: metadata.title,
+                        notes: metadata.notes,
+                        isFavorite: metadata.isFavorite
+                    )
+                    savedAny = true
+                    metadataDrafts[id] = nil
+                    if selectedRecordingID == id {
+                        displayedMetadata = metadata
+                        saveStatusField.stringValue = "Details saved"
+                    }
+                    window?.isDocumentEdited = metadataDrafts.isEmpty == false
+                }
+                displayedMetadata = nil
+                window?.isDocumentEdited = false
+                reloadRecordings()
+                return true
+            } catch {
+                if savedAny {
+                    reloadRecordings()
+                }
+                presentErrorAlert(message: "Failed to save recording details.", detail: error.localizedDescription)
+                return false
+            }
+        case .alertThirdButtonReturn:
+            metadataDrafts.removeAll()
+            displayedMetadata = nil
+            window?.isDocumentEdited = false
+            updateDetail(for: selectedRecording())
+            return true
+        default:
+            return false
         }
     }
 }
@@ -686,6 +894,7 @@ extension RecordingsBrowserWindowController: NSTableViewDataSource, NSTableViewD
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        captureMetadataDraft()
         let selectedRow = tableView.selectedRow
         guard filteredRecordings.indices.contains(selectedRow) else {
             selectedRecordingID = nil
@@ -694,6 +903,7 @@ extension RecordingsBrowserWindowController: NSTableViewDataSource, NSTableViewD
         }
 
         let recording = filteredRecordings[selectedRow]
+        if selectedRecordingID != recording.id { recentlySavedRecordingID = nil }
         selectedRecordingID = recording.id
         updateDetail(for: recording)
     }
@@ -716,6 +926,7 @@ final class RecordingRowView: NSTableCellView {
     func configure(title: String, subtitle: String, isFavorite: Bool) {
         titleField.stringValue = isFavorite ? "★ \(title)" : title
         subtitleField.stringValue = subtitle
+        setAccessibilityLabel("\(title). \(isFavorite ? "Favorite. " : "")\(subtitle)")
     }
 
     private func setup() {

@@ -5,7 +5,7 @@ import Library
 public final class AnnotationEditorWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     public let shotID: UUID
 
-    public var onSave: ((UUID, [ShotAnnotation]) -> Void)?
+    public var onSave: ((UUID, [ShotAnnotation]) -> Bool)?
     public var onClose: ((UUID) -> Void)?
 
     private let canvasView = AnnotationCanvasView()
@@ -69,6 +69,29 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
         onClose?(shotID)
     }
 
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard workingAnnotations != savedAnnotations else {
+            return true
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Save changes to this annotation?"
+        alert.informativeText = "Your unsaved annotations will be lost if you discard them."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard Changes")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            return saveChanges()
+        case .alertThirdButtonReturn:
+            workingAnnotations = savedAnnotations
+            syncControls()
+            return true
+        default:
+            return false
+        }
+    }
+
     private func configureWindow() {
         guard let window else {
             return
@@ -82,12 +105,14 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
         modeControl.target = self
         modeControl.action = #selector(handleModeChange)
         modeControl.translatesAutoresizingMaskIntoConstraints = false
+        modeControl.setAccessibilityLabel("Annotation tool")
 
         textField.placeholderString = "Text label"
         textField.delegate = self
         textField.translatesAutoresizingMaskIntoConstraints = false
         textField.controlSize = .regular
         textField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
+        textField.setAccessibilityLabel("Text annotation label")
 
         [undoButton, clearButton, saveButton].forEach {
             $0.bezelStyle = .rounded
@@ -97,21 +122,33 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
         undoButton.action = #selector(handleUndo)
         clearButton.action = #selector(handleClear)
         saveButton.action = #selector(handleSave)
-        saveButton.keyEquivalent = "\r"
+        saveButton.keyEquivalent = "s"
+        saveButton.keyEquivalentModifierMask = .command
+        undoButton.setAccessibilityLabel("Undo last annotation")
+        clearButton.setAccessibilityLabel("Clear all annotations")
+        saveButton.setAccessibilityLabel("Save annotations")
 
         canvasView.translatesAutoresizingMaskIntoConstraints = false
+        canvasView.setAccessibilityLabel("Annotation canvas")
 
-        let toolbarRow = NSStackView(views: [modeControl, textField, undoButton, clearButton, saveButton])
+        let toolbarRow = NSStackView(views: [modeControl, textField])
         toolbarRow.orientation = .horizontal
         toolbarRow.spacing = 10
         toolbarRow.alignment = .centerY
         toolbarRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let actionRow = NSStackView(views: [undoButton, clearButton, saveButton])
+        actionRow.orientation = .horizontal
+        actionRow.spacing = 10
+        actionRow.alignment = .centerY
+        actionRow.translatesAutoresizingMaskIntoConstraints = false
 
         let contentView = NSView()
         contentView.translatesAutoresizingMaskIntoConstraints = false
         window.contentView = contentView
 
         contentView.addSubview(toolbarRow)
+        contentView.addSubview(actionRow)
         contentView.addSubview(instructionsField)
         contentView.addSubview(canvasView)
 
@@ -120,7 +157,11 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
             toolbarRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             toolbarRow.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
 
-            instructionsField.topAnchor.constraint(equalTo: toolbarRow.bottomAnchor, constant: 12),
+            actionRow.topAnchor.constraint(equalTo: toolbarRow.bottomAnchor, constant: 10),
+            actionRow.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
+            actionRow.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -20),
+
+            instructionsField.topAnchor.constraint(equalTo: actionRow.bottomAnchor, constant: 12),
             instructionsField.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 20),
             instructionsField.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -20),
 
@@ -131,6 +172,7 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
         ])
 
         window.delegate = self
+        window.minSize = NSSize(width: 760, height: 540)
     }
 
     private func syncControls() {
@@ -168,9 +210,16 @@ public final class AnnotationEditorWindowController: NSWindowController, NSWindo
 
     @objc
     private func handleSave() {
-        savedAnnotations = workingAnnotations
-        onSave?(shotID, workingAnnotations)
+        _ = saveChanges()
+    }
+
+    private func saveChanges() -> Bool {
+        guard workingAnnotations != savedAnnotations else { return true }
+        let annotations = workingAnnotations
+        guard onSave?(shotID, annotations) == true else { return false }
+        savedAnnotations = annotations
         syncControls()
+        return true
     }
 
     public func controlTextDidChange(_ obj: Notification) {

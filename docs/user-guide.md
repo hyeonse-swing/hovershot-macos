@@ -305,3 +305,11 @@ If the problem is still reproducible, report:
 - which action you used
 - which display setup you had
 - whether the problem happened on capture, floating shot, browser, or export
+
+## Changes in 0.2.0
+
+Both browsers show result counts and let you clear filters when a search has no results. Double-click a list item to open it. Details remain usable in smaller windows through scrolling.
+
+Unsaved metadata stays in memory when switching items, searching, or refreshing. Use **Save Details** to persist it; Shots also supports **Command-S**. Recording favorites are saved with the other details. Closing a window or quitting the app asks whether to save, discard, or cancel. Force quit or a system failure can still lose unsaved edits.
+
+The annotation editor supports **Command-S** and retains edits if saving fails. Shortcut capture is limited to the Settings window and cancels when that window closes or loses focus.

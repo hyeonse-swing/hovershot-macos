@@ -1,0 +1,7 @@
+# HoverShot app icon
+
+`HoverShotIcon.png` is the app icon source. Generated with the built-in image generation tool on 2026-10-12 and sized for the app bundle, preserving transparency. `scripts/generate-app-icon.swift` builds the required ICNS sizes from this asset.
+
+## Generation prompt
+
+Use case: logo-brand. Create one original, premium macOS app icon for HoverShot, a screenshot utility that captures part of the screen and keeps it floating above other windows. Production icon asset, square composition. The central symbol is a crisp luminous floating rectangular screenshot pane, framed by four bold white capture corner brackets, with one slightly offset pane behind it to communicate hovering and depth. Reduce the idea to large confident geometric shapes that remain clear at 32 pixels. Contemporary native macOS icon craftsmanship: softly rounded square tile, subtle dimensional depth, clean glass and satin surfaces, precise edges, restrained highlights, sophisticated cool blue-teal light against a rich dark blue tile. Strong contrast and memorable silhouette. Front facing with only a very slight perspective on the inner floating pane. The rounded-square tile occupies about 88 percent of the square canvas; a small soft shadow and genuinely transparent outer margins. No letters, words, numbers, camera lens, cursor, sparkles, badges, tiny toolbar dots, landscape photo, surrounding mockup, or watermark. This is the finished app icon alone, not a presentation of multiple options.

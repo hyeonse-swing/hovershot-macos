@@ -134,6 +134,7 @@ final class AppCoordinator: NSObject {
     }
 
     func start() {
+        NSApp.delegate = self
         NSApp.setActivationPolicy(.accessory)
         RuntimeTrace.log("app start")
         refreshPermissions()
@@ -440,7 +441,7 @@ final class AppCoordinator: NSObject {
 
         let controller = AnnotationEditorWindowController(shot: shot, baseImage: image)
         controller.onSave = { [weak self] shotID, annotations in
-            self?.saveAnnotations(for: shotID, annotations: annotations)
+            self?.saveAnnotations(for: shotID, annotations: annotations) ?? false
         }
         controller.onClose = { [weak self] shotID in
             self?.annotationEditorControllers[shotID] = nil
@@ -449,13 +450,15 @@ final class AppCoordinator: NSObject {
         controller.present()
     }
 
-    private func saveAnnotations(for shotID: UUID, annotations: [ShotAnnotation]) {
+    private func saveAnnotations(for shotID: UUID, annotations: [ShotAnnotation]) -> Bool {
         do {
             try shotStore.updateAnnotations(for: shotID, to: annotations)
             floatingWindowCoordinator.refreshShotIfPresented(withID: shotID)
             shotsBrowserWindowController.reloadShots()
+            return true
         } catch {
             presentErrorAlert(message: "Failed to save annotations.", detail: error.localizedDescription)
+            return false
         }
     }
 
@@ -601,6 +604,22 @@ final class AppCoordinator: NSObject {
         case .stopRecording:
             stopRecording()
         }
+    }
+}
+
+extension AppCoordinator: NSApplicationDelegate {
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Resolve edits without closing windows, so cancellation leaves the workspace intact.
+        for window in sender.windows {
+            guard let delegate = window.delegate,
+                  delegate is ShotsBrowserWindowController ||
+                    delegate is RecordingsBrowserWindowController ||
+                    delegate is AnnotationEditorWindowController else { continue }
+            if delegate.windowShouldClose?(window) == false {
+                return .terminateCancel
+            }
+        }
+        return .terminateNow
     }
 }
 

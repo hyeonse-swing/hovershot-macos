@@ -115,15 +115,34 @@ public final class ShotsBrowserWindowController: NSWindowController {
     private let ocrField = NSTextField(labelWithString: "")
     private let ocrActionsLabel = NSTextField(labelWithString: "Smart Actions")
     private let ocrActionsStack = NSStackView()
-    private let primaryActionsContainer = NSView()
-    private let openButton = NSButton(title: "Open", target: nil, action: nil)
+    private let primaryActionsContainer = NSStackView()
+    private let openButton = NSButton(title: "Float Shot", target: nil, action: nil)
     private let annotateButton = NSButton(title: "Annotate", target: nil, action: nil)
     private let copyButton = NSButton(title: "Copy", target: nil, action: nil)
     private let exportButton = NSButton(title: "Export", target: nil, action: nil)
-    private let revealButton = NSButton(title: "Reveal", target: nil, action: nil)
+    private let revealButton = NSButton(title: "Show in Finder", target: nil, action: nil)
     private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
     private let refreshButton = NSButton(title: "Refresh", target: nil, action: nil)
     private let emptyLabel = NSTextField(labelWithString: "No shots match the current filter.")
+    private let resultCountField = NSTextField(labelWithString: "")
+    private let feedbackField = NSTextField(labelWithString: "")
+    private let clearFiltersButton = NSButton(title: "Clear Filters", target: nil, action: nil)
+    private struct MetadataDraft: Equatable {
+        var title: String
+        var notes: String
+        var tags: String
+        var isFavorite: Bool
+
+        init(shot: Shot) {
+            title = shot.title
+            notes = shot.notes ?? ""
+            tags = shot.tags.joined(separator: ", ")
+            isFavorite = shot.isFavorite
+        }
+    }
+    private var drafts: [UUID: MetadataDraft] = [:]
+    private var displayedShot: Shot?
+    private var isReloading = false
     private let tableContextMenu = NSMenu(title: "Shot Actions")
     private let deleteSelectedMenuItem = NSMenuItem(title: "Delete Selected Shots", action: nil, keyEquivalent: "")
 
@@ -162,6 +181,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         absoluteDateFormatter.timeStyle = .short
 
         configureWindow()
+        window.delegate = self
         observeWindowChanges()
         observeStoreChanges()
         DispatchQueue.main.async { [weak self] in
@@ -188,23 +208,24 @@ public final class ShotsBrowserWindowController: NSWindowController {
     }
 
     public func reloadShots(preservingSelection: Bool = true) {
-        let previousSelection = preservingSelection ? selectedShotID : nil
+        rememberDraft()
+        let previousSelections = preservingSelection ? Set(selectedShots().map(\.id)) : []
 
         do {
             allShots = try shotStore.loadShots().sorted { $0.createdAt > $1.createdAt }
         } catch {
-            allShots = []
             presentErrorAlert(
                 message: "Failed to load shots.",
                 detail: error.localizedDescription
             )
+            return
         }
 
         applyFilter()
 
-        if let previousSelection,
-           let index = filteredShots.firstIndex(where: { $0.id == previousSelection }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        let indexes = IndexSet(filteredShots.indices.filter { previousSelections.contains(filteredShots[$0].id) })
+        if !indexes.isEmpty {
+            tableView.selectRowIndexes(indexes, byExtendingSelection: false)
         } else if filteredShots.isEmpty == false {
             tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         } else {
@@ -212,6 +233,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             selectedShotID = nil
             updateDetail(for: nil)
         }
+        refreshSelectionDetail()
 
     }
 
@@ -253,6 +275,9 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
         searchField.placeholderString = "Search titles, OCR, tags, notes"
         searchField.delegate = self
+        searchField.setAccessibilityLabel("Search shots")
+        searchField.toolTip = "Search titles, recognized text, tags, and notes"
+        scopePopUpButton.setAccessibilityLabel("Filter shots")
         searchField.translatesAutoresizingMaskIntoConstraints = false
         scopePopUpButton.translatesAutoresizingMaskIntoConstraints = false
         scopePopUpButton.target = self
@@ -272,7 +297,10 @@ public final class ShotsBrowserWindowController: NSWindowController {
         tableView.rowHeight = 56
         tableView.intercellSpacing = NSSize(width: 0, height: 8)
         tableView.backgroundColor = .clear
-        tableView.focusRingType = .none
+        tableView.focusRingType = .default
+        tableView.setAccessibilityLabel("Shots")
+        tableView.target = self
+        tableView.doubleAction = #selector(handleOpenSelectedShot)
         tableView.allowsMultipleSelection = true
         tableView.delegate = self
         tableView.dataSource = self
@@ -289,6 +317,18 @@ public final class ShotsBrowserWindowController: NSWindowController {
         emptyLabel.isHidden = true
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        emptyLabel.maximumNumberOfLines = 0
+        emptyLabel.lineBreakMode = .byWordWrapping
+        clearFiltersButton.bezelStyle = .rounded
+        clearFiltersButton.target = self
+        clearFiltersButton.action = #selector(handleClearFilters)
+        clearFiltersButton.translatesAutoresizingMaskIntoConstraints = false
+        clearFiltersButton.isHidden = true
+        resultCountField.textColor = .secondaryLabelColor
+        resultCountField.font = .systemFont(ofSize: 11)
+        resultCountField.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(resultCountField)
+        container.addSubview(clearFiltersButton)
         container.addSubview(searchField)
         container.addSubview(scopePopUpButton)
         container.addSubview(scrollView)
@@ -306,10 +346,16 @@ public final class ShotsBrowserWindowController: NSWindowController {
             scrollView.topAnchor.constraint(equalTo: scopePopUpButton.bottomAnchor, constant: 12),
             scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
             scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12),
+            scrollView.bottomAnchor.constraint(equalTo: resultCountField.topAnchor, constant: -8),
 
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor)
+            emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor, constant: -20),
+            emptyLabel.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 8),
+            emptyLabel.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -8),
+            clearFiltersButton.topAnchor.constraint(equalTo: emptyLabel.bottomAnchor, constant: 12),
+            clearFiltersButton.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
+            resultCountField.leadingAnchor.constraint(equalTo: searchField.leadingAnchor),
+            resultCountField.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
         ])
 
         return container
@@ -317,6 +363,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
     private func makeDetailView() -> NSView {
         detailScrollView.translatesAutoresizingMaskIntoConstraints = false
+        detailScrollView.widthAnchor.constraint(greaterThanOrEqualToConstant: 300).isActive = true
         detailScrollView.drawsBackground = false
         detailScrollView.borderType = .noBorder
         detailScrollView.hasVerticalScroller = true
@@ -344,6 +391,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
         self.previewHeightConstraint = previewHeightConstraint
 
         titleField.placeholderString = "Shot title"
+        titleField.setAccessibilityLabel("Shot title")
+        titleField.delegate = self
+        tagsField.setAccessibilityLabel("Tags, comma separated")
+        tagsField.delegate = self
+        notesTextView.setAccessibilityLabel("Shot notes")
+        notesTextView.delegate = self
+        previewImageView.setAccessibilityLabel("Shot preview")
         titleField.font = .systemFont(ofSize: 22, weight: .semibold)
         titleField.lineBreakMode = .byTruncatingTail
         titleField.isBordered = false
@@ -375,6 +429,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
         saveMetadataButton.target = self
         saveMetadataButton.action = #selector(handleSaveMetadata)
         saveMetadataButton.translatesAutoresizingMaskIntoConstraints = false
+        saveMetadataButton.keyEquivalent = "s"
+        saveMetadataButton.keyEquivalentModifierMask = .command
+        feedbackField.textColor = .secondaryLabelColor
+        feedbackField.font = .systemFont(ofSize: 12)
+        feedbackField.maximumNumberOfLines = 0
+        feedbackField.lineBreakMode = .byWordWrapping
+        ocrField.isSelectable = true
         ocrField.textColor = .secondaryLabelColor
         ocrField.font = .systemFont(ofSize: 12, weight: .regular)
         ocrField.lineBreakMode = .byCharWrapping
@@ -442,7 +503,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         notesStack.spacing = 8
         notesStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let metadataActionRow = NSStackView(views: [saveMetadataButton])
+        let metadataActionRow = NSStackView(views: [saveMetadataButton, feedbackField])
         metadataActionRow.orientation = .horizontal
         metadataActionRow.alignment = .leading
         metadataActionRow.translatesAutoresizingMaskIntoConstraints = false
@@ -467,9 +528,9 @@ public final class ShotsBrowserWindowController: NSWindowController {
             previewImageView.topAnchor.constraint(equalTo: container.topAnchor, constant: 24),
             previewImageView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             previewImageView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
-            previewImageView.heightAnchor.constraint(equalToConstant: 220),
 
-            infoStack.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 20),
+
+            infoStack.topAnchor.constraint(equalTo: primaryActionsContainer.bottomAnchor, constant: 20),
             infoStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
             infoStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
 
@@ -499,11 +560,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
             metadataActionRow.topAnchor.constraint(equalTo: notesStack.bottomAnchor, constant: 12),
             metadataActionRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
+            metadataActionRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24),
+            metadataActionRow.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24),
+            notesScrollView.widthAnchor.constraint(equalTo: notesStack.widthAnchor),
 
-            primaryActionsContainer.topAnchor.constraint(equalTo: metadataActionRow.bottomAnchor, constant: 18),
+            primaryActionsContainer.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 12),
             primaryActionsContainer.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 24),
-            primaryActionsContainer.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor, constant: -24),
-            primaryActionsContainer.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -24)
+            primaryActionsContainer.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -24)
         ])
 
         configurePrimaryActionRows()
@@ -512,6 +575,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
     }
 
     private func applyFilter() {
+        rememberDraft()
         let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         let scope = FilterScope(rawValue: scopePopUpButton.indexOfSelectedItem) ?? .all
 
@@ -533,8 +597,16 @@ public final class ShotsBrowserWindowController: NSWindowController {
             }
         }
 
+        isReloading = true
         tableView.reloadData()
+        isReloading = false
         emptyLabel.isHidden = filteredShots.isEmpty == false
+        emptyLabel.stringValue = allShots.isEmpty
+            ? "No shots yet.\nCapture an area or import an image from the menu bar."
+            : "No matching shots.\nTry another search or clear your filters."
+        clearFiltersButton.isHidden = filteredShots.isEmpty == false || (query.isEmpty && scope == .all)
+        resultCountField.stringValue = "\(filteredShots.count) of \(allShots.count) shots"
+        drafts = drafts.filter { id, _ in allShots.contains { $0.id == id } }
     }
 
     private func selectedShot() -> Shot? {
@@ -553,8 +625,11 @@ public final class ShotsBrowserWindowController: NSWindowController {
     }
 
     private func updateDetail(for shot: Shot?) {
+        rememberDraft()
+        displayedShot = shot
         guard let shot else {
             isUpdatingMetadataForm = true
+            feedbackField.stringValue = ""
             previewImageView.image = nil
             titleField.stringValue = "No shot selected"
             metadataField.stringValue = "Choose a shot from the list to preview it."
@@ -572,20 +647,25 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
         isUpdatingMetadataForm = true
         previewImageView.image = shotStore.loadRenderedImage(for: shot)
-        titleField.stringValue = shot.title
+        let draft = drafts[shot.id] ?? MetadataDraft(shot: shot)
+        titleField.stringValue = draft.title
         metadataField.stringValue = metadataString(for: shot)
         stateField.stringValue = stateString(for: shot)
-        favoriteButton.state = shot.isFavorite ? .on : .off
-        tagsField.stringValue = shot.tags.joined(separator: ", ")
-        notesTextView.string = shot.notes ?? ""
+        favoriteButton.state = draft.isFavorite ? .on : .off
+        tagsField.stringValue = draft.tags
+        notesTextView.string = draft.notes
         ocrField.stringValue = ocrString(for: shot)
         currentDetectedDataItems = detectedDataItems(for: shot)
         reloadOCRActionButtons()
         isUpdatingMetadataForm = false
         updateButtons(enabled: true)
+        updateDraftFeedback()
     }
 
     private func updateDetailForMultipleSelection(_ shots: [Shot]) {
+        rememberDraft()
+        displayedShot = nil
+        feedbackField.stringValue = ""
         isUpdatingMetadataForm = true
         previewImageView.image = nil
         titleField.stringValue = "\(shots.count) shots selected"
@@ -743,51 +823,15 @@ public final class ShotsBrowserWindowController: NSWindowController {
     }
 
     private func configurePrimaryActionRows() {
-        primaryActionsContainer.subviews.forEach { $0.removeFromSuperview() }
-
-        let horizontalSpacing: CGFloat = 8
-        let verticalSpacing: CGFloat = 8
-
-        let topButtons = [openButton, annotateButton, copyButton, exportButton]
-        let bottomButtons = [revealButton, deleteButton, refreshButton]
-
-        topButtons.forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            primaryActionsContainer.addSubview($0)
-        }
-        bottomButtons.forEach {
-            $0.translatesAutoresizingMaskIntoConstraints = false
-            primaryActionsContainer.addSubview($0)
-        }
-
-        var constraints: [NSLayoutConstraint] = []
-
-        constraints.append(openButton.topAnchor.constraint(equalTo: primaryActionsContainer.topAnchor))
-        constraints.append(openButton.leadingAnchor.constraint(equalTo: primaryActionsContainer.leadingAnchor))
-
-        constraints.append(annotateButton.topAnchor.constraint(equalTo: openButton.topAnchor))
-        constraints.append(annotateButton.leadingAnchor.constraint(equalTo: openButton.trailingAnchor, constant: horizontalSpacing))
-
-        constraints.append(copyButton.topAnchor.constraint(equalTo: openButton.topAnchor))
-        constraints.append(copyButton.leadingAnchor.constraint(equalTo: annotateButton.trailingAnchor, constant: horizontalSpacing))
-
-        constraints.append(exportButton.topAnchor.constraint(equalTo: openButton.topAnchor))
-        constraints.append(exportButton.leadingAnchor.constraint(equalTo: copyButton.trailingAnchor, constant: horizontalSpacing))
-        constraints.append(exportButton.trailingAnchor.constraint(lessThanOrEqualTo: primaryActionsContainer.trailingAnchor))
-
-        constraints.append(revealButton.topAnchor.constraint(equalTo: openButton.bottomAnchor, constant: verticalSpacing))
-        constraints.append(revealButton.leadingAnchor.constraint(equalTo: primaryActionsContainer.leadingAnchor))
-
-        constraints.append(deleteButton.topAnchor.constraint(equalTo: revealButton.topAnchor))
-        constraints.append(deleteButton.leadingAnchor.constraint(equalTo: revealButton.trailingAnchor, constant: horizontalSpacing))
-
-        constraints.append(refreshButton.topAnchor.constraint(equalTo: revealButton.topAnchor))
-        constraints.append(refreshButton.leadingAnchor.constraint(equalTo: deleteButton.trailingAnchor, constant: horizontalSpacing))
-        constraints.append(refreshButton.trailingAnchor.constraint(lessThanOrEqualTo: primaryActionsContainer.trailingAnchor))
-        constraints.append(refreshButton.bottomAnchor.constraint(equalTo: primaryActionsContainer.bottomAnchor))
-
-        NSLayoutConstraint.activate(constraints)
-        primaryActionsContainer.isHidden = false
+        primaryActionsContainer.orientation = .vertical
+        primaryActionsContainer.alignment = .leading
+        primaryActionsContainer.spacing = 8
+        rebuildWrappedButtonRows(
+            buttons: [openButton, annotateButton, copyButton, exportButton, revealButton, deleteButton, refreshButton],
+            in: primaryActionsContainer,
+            availableWidth: availablePrimaryActionsWidth(),
+            maxColumns: 4
+        )
     }
 
     private func rebuildWrappedButtonRows(
@@ -807,7 +851,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         }
 
         let spacing: CGFloat = 8
-        let estimatedButtonWidth: CGFloat = 108
+        let estimatedButtonWidth: CGFloat = 124
         let columns = max(
             1,
             min(
@@ -820,7 +864,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             let rowButtons = Array(buttons[index..<min(index + columns, buttons.count)])
             let row = NSStackView()
             row.orientation = .horizontal
-            row.alignment = .leading
+            row.alignment = .centerY
             row.spacing = spacing
             row.translatesAutoresizingMaskIntoConstraints = false
             rowButtons.forEach { row.addArrangedSubview($0) }
@@ -857,12 +901,13 @@ public final class ShotsBrowserWindowController: NSWindowController {
             max((window?.contentView?.bounds.width ?? Self.preferredWindowSize.width) - 260, 0)
         ]
 
-        return measuredWidths.filter { $0 > 0 }.max() ?? (Self.preferredWindowSize.width - 240)
+        return measuredWidths.first { $0 > 0 } ?? (Self.preferredWindowSize.width - 240)
     }
 
     private func refreshDetailLayoutAfterPresentation() {
         let refresh: @MainActor () -> Void = { [weak self] in
             guard let self else { return }
+            self.configurePrimaryActionRows()
             self.reloadOCRActionButtons()
             self.scrollDetailToTop()
         }
@@ -936,6 +981,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
     @objc
     private func handleWindowDidResize() {
+        configurePrimaryActionRows()
         reloadOCRActionButtons()
     }
 
@@ -949,7 +995,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
     @objc
     private func handleOpenSelectedShot() {
-        guard let shot = selectedShot() else {
+        guard selectedShots().count == 1, let shot = selectedShot() else {
             return
         }
 
@@ -990,7 +1036,9 @@ public final class ShotsBrowserWindowController: NSWindowController {
             }
 
             do {
-                try self.delegate?.shotsBrowserWindowController(self, didRequestCopy: shot)
+                guard let delegate = self.delegate else { return }
+                try delegate.shotsBrowserWindowController(self, didRequestCopy: shot)
+                self.feedbackField.stringValue = "Image copied to clipboard."
             } catch {
                 self.presentErrorAlert(message: "Failed to copy shot.", detail: error.localizedDescription)
             }
@@ -1074,36 +1122,58 @@ public final class ShotsBrowserWindowController: NSWindowController {
         reloadShots()
     }
 
+    private func rememberDraft() {
+        guard !isUpdatingMetadataForm, let shot = displayedShot,
+              allShots.contains(where: { $0.id == shot.id }) else { return }
+        var draft = MetadataDraft(shot: shot)
+        draft.title = titleField.stringValue
+        draft.notes = notesTextView.string
+        draft.tags = tagsField.stringValue
+        draft.isFavorite = favoriteButton.state == .on
+        drafts[shot.id] = draft == MetadataDraft(shot: shot) ? nil : draft
+        window?.isDocumentEdited = !drafts.isEmpty
+    }
+
+    private func updateDraftFeedback() {
+        let isDirty = displayedShot.map { drafts[$0.id] != nil } ?? false
+        saveMetadataButton.isEnabled = isDirty
+        feedbackField.stringValue = isDirty ? "Unsaved changes · ⌘S to save" : ""
+        window?.isDocumentEdited = !drafts.isEmpty
+    }
+
+    @discardableResult
+    private func saveDraft(for id: UUID) -> Bool {
+        guard let draft = drafts[id], let shot = allShots.first(where: { $0.id == id }),
+              let delegate else { return false }
+        let previousDisplayedShot = displayedShot
+        displayedShot = nil
+        do {
+            try delegate.shotsBrowserWindowController(
+                self, didRequestUpdateMetadataFor: shot, title: draft.title,
+                notes: draft.notes,
+                tags: draft.tags.components(separatedBy: CharacterSet(charactersIn: ",\n"))
+                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty },
+                isFavorite: draft.isFavorite
+            )
+            drafts[id] = nil
+            displayedShot = nil
+            reloadShots()
+            feedbackField.stringValue = "Details saved."
+            return true
+        } catch {
+            displayedShot = previousDisplayedShot
+            drafts[id] = draft
+            updateDraftFeedback()
+            presentErrorAlert(message: "Failed to save shot metadata.", detail: error.localizedDescription)
+            return false
+        }
+    }
+
     @objc
     private func handleSaveMetadata() {
-        guard let shot = selectedShot() else {
-            return
-        }
-
-        let title = titleField.stringValue
-        let notes = notesTextView.string
-        let tags = parsedTags()
-        let isFavorite = favoriteButton.state == .on
-
-        Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-
-            do {
-                try self.delegate?.shotsBrowserWindowController(
-                    self,
-                    didRequestUpdateMetadataFor: shot,
-                    title: title,
-                    notes: notes,
-                    tags: tags,
-                    isFavorite: isFavorite
-                )
-                self.reloadShots()
-            } catch {
-                self.presentErrorAlert(message: "Failed to save shot metadata.", detail: error.localizedDescription)
-            }
-        }
+        rememberDraft()
+        guard let id = displayedShot?.id else { return }
+        saveDraft(for: id)
     }
 
     @objc
@@ -1117,7 +1187,9 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
     @objc
     private func handleScopeChanged() {
+        let previousID = selectedShotID
         applyFilter()
+        selectedShotID = previousID
 
         if let selectedShotID,
            let index = filteredShots.firstIndex(where: { $0.id == selectedShotID }) {
@@ -1128,6 +1200,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
             selectedShotID = nil
             updateDetail(for: nil)
         }
+        refreshSelectionDetail()
     }
 
     @objc
@@ -1137,6 +1210,7 @@ public final class ShotsBrowserWindowController: NSWindowController {
         }
 
         copyStringToPasteboard(text)
+        feedbackField.stringValue = "Recognized text copied to clipboard."
     }
 
     @objc
@@ -1160,19 +1234,51 @@ public final class ShotsBrowserWindowController: NSWindowController {
 
 }
 
-extension ShotsBrowserWindowController: NSSearchFieldDelegate {
+extension ShotsBrowserWindowController: NSSearchFieldDelegate, NSTextViewDelegate, NSWindowDelegate {
     public func controlTextDidChange(_ obj: Notification) {
-        applyFilter()
-
-        if let selectedShotID,
-           let index = filteredShots.firstIndex(where: { $0.id == selectedShotID }) {
-            tableView.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
-        } else if filteredShots.isEmpty == false {
-            tableView.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        if obj.object as? NSSearchField === searchField {
+            handleScopeChanged()
         } else {
-            selectedShotID = nil
-            updateDetail(for: nil)
+            rememberDraft()
+            updateDraftFeedback()
         }
+    }
+
+    public func textDidChange(_ notification: Notification) {
+        rememberDraft()
+        updateDraftFeedback()
+    }
+
+    public func windowShouldClose(_ sender: NSWindow) -> Bool {
+        rememberDraft()
+        guard !drafts.isEmpty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "Save changes before closing?"
+        alert.informativeText = "You have unsaved details for \(drafts.count) shot(s)."
+        alert.addButton(withTitle: "Save All")
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Discard Changes")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            for id in Array(drafts.keys) {
+                guard saveDraft(for: id) else { return false }
+            }
+            return true
+        case .alertThirdButtonReturn:
+            drafts.removeAll()
+            displayedShot = nil
+            refreshSelectionDetail()
+            sender.isDocumentEdited = false
+            return true
+        default: return false
+        }
+    }
+
+    @objc private func handleClearFilters() {
+        searchField.stringValue = ""
+        scopePopUpButton.selectItem(at: FilterScope.all.rawValue)
+        handleScopeChanged()
+        window?.makeFirstResponder(searchField)
     }
 }
 
@@ -1206,6 +1312,12 @@ extension ShotsBrowserWindowController: NSTableViewDataSource, NSTableViewDelega
     }
 
     public func tableViewSelectionDidChange(_ notification: Notification) {
+        guard !isReloading else { return }
+        refreshSelectionDetail()
+    }
+
+    private func refreshSelectionDetail() {
+        rememberDraft()
         let selectedRows = tableView.selectedRowIndexes
         guard selectedRows.isEmpty == false else {
             selectedShotID = nil
