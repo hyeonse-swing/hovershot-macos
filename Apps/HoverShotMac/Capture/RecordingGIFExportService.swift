@@ -47,13 +47,14 @@ public final class RecordingGIFExportService {
         let asset = AVURLAsset(url: sourceURL)
         let duration = try await asset.load(.duration)
         let durationSeconds = duration.seconds
-        guard durationSeconds.isFinite, durationSeconds > 0 else {
+        guard durationSeconds.isFinite, durationSeconds > 0,
+              (durationSeconds * 100).isFinite else {
             throw RecordingGIFExportError.invalidDuration
         }
 
-        let frameCount = recommendedFrameCount(for: durationSeconds)
-        let frameDelay = max(durationSeconds / Double(frameCount), 0.08)
-        let epsilon = min(frameDelay * 0.5, 0.03)
+        let frameDelays = Self.recommendedFrameDelays(for: durationSeconds)
+        let frameCount = frameDelays.count
+        let epsilon = min(durationSeconds / Double(frameCount) * 0.5, 0.03)
 
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
@@ -78,7 +79,7 @@ public final class RecordingGIFExportService {
         CGImageDestinationSetProperties(destination, fileProperties)
 
         for index in 0..<frameCount {
-            let second = min(Double(index) * frameDelay, max(durationSeconds - epsilon, 0))
+            let second = min(Double(index) * durationSeconds / Double(frameCount), max(durationSeconds - epsilon, 0))
             let time = CMTime(seconds: second, preferredTimescale: 600)
 
             let image: CGImage
@@ -90,7 +91,7 @@ public final class RecordingGIFExportService {
 
             let frameProperties = [
                 kCGImagePropertyGIFDictionary: [
-                    kCGImagePropertyGIFDelayTime: frameDelay
+                    kCGImagePropertyGIFDelayTime: frameDelays[index]
                 ]
             ] as CFDictionary
             CGImageDestinationAddImage(destination, image, frameProperties)
@@ -110,9 +111,18 @@ public final class RecordingGIFExportService {
         return "\(base).gif"
     }
 
-    private func recommendedFrameCount(for durationSeconds: TimeInterval) -> Int {
+    nonisolated static func recommendedFrameDelays(for durationSeconds: TimeInterval) -> [TimeInterval] {
         let targetFPS = durationSeconds <= 4 ? 8.0 : 6.0
-        let targetFrames = Int((durationSeconds * targetFPS).rounded(.up))
-        return min(max(targetFrames, 12), 90)
+        let targetFrames = Int(min((durationSeconds * targetFPS).rounded(.up), 90))
+        let framesAtMinimumDelay = Int(min((durationSeconds / 0.08).rounded(.down), 12))
+        let roundedCentiseconds = max(1, (durationSeconds * 100).rounded())
+        let plannedCount = min(max(targetFrames, min(12, framesAtMinimumDelay)), 90)
+        let frameCount = Int(min(Double(plannedCount), roundedCentiseconds))
+
+        return (0..<frameCount).map { index in
+            let start = (Double(index) * roundedCentiseconds / Double(frameCount)).rounded()
+            let end = (Double(index + 1) * roundedCentiseconds / Double(frameCount)).rounded()
+            return (end - start) / 100
+        }
     }
 }
